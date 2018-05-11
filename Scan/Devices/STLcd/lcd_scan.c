@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2017 by Jacob Alexander
+/* Copyright (C) 2015-2018 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -107,6 +107,7 @@ static uint8_t stlcdLatencyResource;
 
 void SPI_setup()
 {
+#if defined(_kinetis_)
 	// Enable SPI internal clock
 	SIM_SCGC6 |= SIM_SCGC6_SPI0;
 
@@ -129,6 +130,9 @@ void SPI_setup()
 		| SPI_CTAR_DT(7)
 		| SPI_CTAR_CSSCK(7)
 		| SPI_CTAR_PBR(0) | SPI_CTAR_BR(7);
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 }
 
 // Write buffer to SPI FIFO
@@ -137,9 +141,10 @@ void SPI_write( uint8_t *buffer, uint8_t len )
 
 	for ( uint8_t byte = 0; byte < len; byte++ )
 	{
+#if defined(_kinetis_)
 		// Wait for SPI TxFIFO to have 4 or fewer entries
 		while ( !( SPI0_SR & SPI_SR_TFFF ) )
-			delayMicroseconds(10);
+			delay_us(10);
 
 		// Write byte to TxFIFO
 		// CS0, CTAR0
@@ -148,12 +153,16 @@ void SPI_write( uint8_t *buffer, uint8_t len )
 		// Indicate transfer has completed
 		while ( !( SPI0_SR & SPI_SR_TCF ) );
 		SPI0_SR |= SPI_SR_TCF;
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 	}
 }
 
 // Write to a control register
 void LCD_writeControlReg( uint8_t byte )
 {
+#if defined(_kinetis_)
 	// Wait for TxFIFO to be empt
 	while ( SPI0_TxFIFO_CNT != 0 );
 
@@ -167,15 +176,19 @@ void LCD_writeControlReg( uint8_t byte )
 	while ( SPI0_TxFIFO_CNT != 0 );
 
 	// Make sure data has transferred
-	delayMicroseconds(10); // XXX Adjust if SPI speed changes
+	delay_us(10); // XXX Adjust if SPI speed changes
 
 	// Set A0 high to go back to display register mode
 	GPIOC_PSOR |= (1<<7);
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 }
 
 // Write to a data register with a0 bit high
 void LCD_writeDataReg( uint8_t byte )
 {
+#if defined(_kinetis_)
 	// Wait for TxFIFO to be empt
 	while ( SPI0_TxFIFO_CNT != 0 );
 
@@ -189,7 +202,10 @@ void LCD_writeDataReg( uint8_t byte )
 	while ( SPI0_TxFIFO_CNT != 0 );
 
 	// Make sure data has transferred
-	delayMicroseconds(10); // XXX Adjust if SPI speed changes
+	delay_us(10); // XXX Adjust if SPI speed changes
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 
 }
 
@@ -233,7 +249,11 @@ void LCD_clearPage( uint8_t page )
 	}
 
 	// Wait for TxFIFO to be empty
+#if defined(_kinetis_)
 	while ( SPI0_TxFIFO_CNT != 0 );
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 }
 
 // Clear Display
@@ -301,6 +321,7 @@ inline void LCD_setup()
 	// Initialize SPI
 	SPI_setup();
 
+#if defined(_kinetis_)
 	// Setup Register Control Signal (A0)
 	// Start in display register mode (1)
 	GPIOC_PDDR |= (1<<7);
@@ -319,7 +340,9 @@ inline void LCD_setup()
 
 	// Write default image to LCD
 	for ( uint8_t page = 0; page < LCD_TOTAL_VISIBLE_PAGES; page++ )
+	{
 		LCD_writeDisplayReg( page, (uint8_t*)&STLcdDefaultImage[page * LCD_PAGE_LEN], LCD_PAGE_LEN );
+	}
 
 	// Setup Backlight
 	SIM_SCGC6 |= SIM_SCGC6_FTM0;
@@ -363,6 +386,9 @@ inline void LCD_setup()
 	// Blue
 	FTM0_C2V = STLcdBacklightBlue_define;
 	PORTC_PCR3 = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(4);
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 
 	// Allocate Latency resource
 	stlcdLatencyResource = Latency_add_resource("STLcd", LatencyOption_Ticks);
@@ -372,6 +398,7 @@ inline void LCD_setup()
 // LCD State processing loop
 static inline void check_caps_lock()
 {
+#if defined(_kinetis_)
 	static uint16_t hold_color[3];
 	static uint8_t was_capslock = 0;
 
@@ -401,6 +428,9 @@ static inline void check_caps_lock()
 		FTM0_C1V = 0x1394;
 		FTM0_C2V = 0xb9f9;
 	}
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 }
 
 inline uint8_t LCD_scan()
@@ -420,7 +450,15 @@ inline uint8_t LCD_scan()
 // current - mA
 void LCD_currentChange( unsigned int current )
 {
-	// TODO - Power savings?
+	// Since we are only disabling the PWM module, we can just do this immediately
+	if ( current < 150 )
+	{
+		SIM_SCGC6 &= ~(SIM_SCGC6_FTM0);
+	}
+	else
+	{
+		SIM_SCGC6 |= SIM_SCGC6_FTM0;
+	}
 }
 
 
@@ -438,10 +476,20 @@ typedef struct LCD_layerStackExact_args {
 } LCD_layerStackExact_args;
 void LCD_layerStackExact_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+	case CapabilityState_Any:
+	case CapabilityState_Last:
+		// Press/Hold/Release
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("LCD_layerStackExact_capability(num,layer1,layer2,layer3,layer4)");
+		return;
+	default:
 		return;
 	}
 
@@ -481,9 +529,13 @@ void LCD_layerStackExact_capability( TriggerMacro *trigger, uint8_t state, uint8
 	{
 		// Set the color according to the "top-of-stack" layer
 		uint16_t layerIndex = stack_args->layers[0];
+#if defined(_kinetis_)
 		FTM0_C0V = colors[ layerIndex ][0];
 		FTM0_C1V = colors[ layerIndex ][1];
 		FTM0_C2V = colors[ layerIndex ][2];
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 
 		// Iterate through each of the pages
 		// XXX Many of the values here are hard-coded
@@ -526,9 +578,13 @@ void LCD_layerStackExact_capability( TriggerMacro *trigger, uint8_t state, uint8
 	else
 	{
 		// Set default backlight
+#if defined(_kinetis_)
 		FTM0_C0V = STLcdBacklightRed_define;
 		FTM0_C1V = STLcdBacklightGreen_define;
 		FTM0_C2V = STLcdBacklightBlue_define;
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 
 		// Write default image
 		for ( uint8_t page = 0; page < LCD_TOTAL_VISIBLE_PAGES; page++ )
@@ -542,10 +598,20 @@ uint16_t LCD_layerStack_prevSize = 0;
 uint16_t LCD_layerStack_prevTop  = 0;
 void LCD_layerStack_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+	case CapabilityState_Any:
+	case CapabilityState_Last:
+		// Press/Hold/Release
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("LCD_layerStack_capability()");
+		return;
+	default:
 		return;
 	}
 
@@ -608,7 +674,9 @@ void cliFunc_lcdTest( char* args )
 {
 	// Write default image
 	for ( uint8_t page = 0; page < LCD_TOTAL_VISIBLE_PAGES; page++ )
+	{
 		LCD_writeDisplayReg( page, (uint8_t *)&STLcdDefaultImage[page * LCD_PAGE_LEN], LCD_PAGE_LEN );
+	}
 }
 
 void cliFunc_lcdCmd( char* args )
@@ -642,7 +710,7 @@ void cliFunc_lcdCmd( char* args )
 		return;
 	}
 
-	if ( *arg2Ptr != '\0' ) 
+	if ( *arg2Ptr != '\0' )
 	{
 		info_msg("Sending WITH A0 FLAG SET- ");
 		printHex( cmd );
@@ -677,9 +745,13 @@ void cliFunc_lcdColor( char* args )
 	}
 
 	// Set PWM channels
+#if defined(_kinetis_)
 	FTM0_C0V = rgb[0];
 	FTM0_C1V = rgb[1];
 	FTM0_C2V = rgb[2];
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 }
 
 void cliFunc_lcdDisp( char* args )
@@ -722,7 +794,7 @@ void cliFunc_lcdDisp( char* args )
 		if ( *arg1Ptr == '\0' )
 			break;
 
-		uint8_t value = numToInt( arg1Ptr ); 
+		uint8_t value = numToInt( arg1Ptr );
 		// Write buffer to SPI
 		SPI_write( &value, 1 );
 	}

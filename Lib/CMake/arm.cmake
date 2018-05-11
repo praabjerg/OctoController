@@ -1,6 +1,6 @@
 ###| CMAKE Kiibohd Controller |###
 #
-# Jacob Alexander 2011-2017
+# Jacob Alexander 2011-2018
 # Due to this file's usefulness:
 #
 # Released into the Public Domain
@@ -77,6 +77,10 @@ if ( "${CHIP}" MATCHES "^mk.*$" )
 #| SAM
 elseif ( "${CHIP}" MATCHES "^sam.*$" )
 	include( sam )
+
+#| nRF
+elseif ( "${CHIP}" MATCHES "^nrf5.*$" )
+	include( nrf5 )
 
 #| Unknown
 else ()
@@ -182,7 +186,19 @@ endif ()
 #| Optimization level, can be [0, 1, 2, 3, s].
 #|     0 = turn off optimization. s = optimize for size.
 #|     (Note: 3 is not always the best optimization level.)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+set( OPT "0" )
+add_definitions("-DDEBUG")
+else ()
 set( OPT "s" )
+endif ()
+
+#| JLink support
+#| Used to drop to a breakpoint hardfault handler
+#| This isn't something most people would want
+if ( JLINK )
+add_definitions("-DJLINK")
+endif ()
 
 
 #| Compiler Flags

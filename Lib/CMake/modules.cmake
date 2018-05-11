@@ -215,8 +215,16 @@ if ( CTAGS_EXECUTABLE )
 	endforeach ()
 
 	# Generate the ctags
-	execute_process ( COMMAND ctags --fields=+l ${CTAG_PATHS}
+	execute_process ( COMMAND ${CTAGS_EXECUTABLE} --fields=+l ${CTAG_PATHS}
 		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 	)
 endif ()
 
+
+###
+# Create compile_commands.json (Useful for language servers as a ctags alternative)
+#
+set( CMAKE_EXPORT_COMPILE_COMMANDS ON)
+execute_process (
+	COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_BINARY_DIR}/compile_commands.json ${CMAKE_SOURCE_DIR}/compile_commands.json
+)

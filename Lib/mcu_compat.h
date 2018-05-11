@@ -1,4 +1,4 @@
-/* Copyright (C) 2017 by Jacob Alexander
+/* Copyright (C) 2017-2018 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,13 +34,26 @@
 //
 // _sam_      - SAM MCU
 // _sam4s_    - SAM 4s    MCU
+// _sam4s2_   - SAM 4s2   MCU
+// _sam4s4_   - SAM 4s4   MCU
 // _sam4s8_   - SAM 4s8   MCU
 // _sam4s16_  - SAM 4s16  MCU
 // _sam4sa16_ - SAM 4sa16 MCU
 // _sam4sd16_ - SAM 4sd16 MCU
 // _sam4sd32_ - SAM 4sd32 MCU
+// _sam4s_a_  - SAM 4s 48-pin  MCU
 // _sam4s_b_  - SAM 4s 64-pin  MCU
 // _sam4s_c_  - SAM 4s 100-pin MCU
+//
+// _nrf_        - nRF      BLE MCU
+// _nrf5_       - nRF5     BLE MCU
+// _nrf52_      - nRF52    BLE MCU
+// _nrf528_     - nRF528   BLE MCU
+// _nrf52810_   - nRF52810 BLE MCU
+// _nrf52832_   - nRF52832 BLE MCU
+// _nrf52832_a_ - nRF52832 BLE MCU 512 kB
+// _nrf52832_b_ - nRF52832 BLE MCU 256 kB
+// _nrf52840_   - nRF52840 BLE MCU
 //
 // _kii_v1_ - Kiibohd Firmware Layout v1 - First Keyboard: Infinity 60%
 // _kii_v2_ - Kiibohd Firmware Layout v2 - First Keyboard: Infinity Ergodox
@@ -123,7 +136,61 @@
 
 // - SAM ARM MCUs -
 
-// sam4s8b (1028 kB)
+// sam4s2a (128 kB) 48-pin
+#if defined(_sam4s2a_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_a_ 1
+	#define _sam4s2_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4s2b (128 kB) 64-pin
+#if defined(_sam4s2b_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_b_ 1
+	#define _sam4s2_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4s2c (128 kB) 100-pin
+#if defined(_sam4s2c_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_c_ 1
+	#define _sam4s2_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4s4a (256 kB) 48-pin
+#if defined(_sam4s4a_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_a_ 1
+	#define _sam4s4_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4s4b (256 kB) 64-pin
+#if defined(_sam4s4b_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_b_ 1
+	#define _sam4s4_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4s4c (256 kB) 100-pin
+#if defined(_sam4s4c_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_c_ 1
+	#define _sam4s4_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4s8b (512 kB) 64-pin
 #if defined(_sam4s8b_)
 	#define _sam_ 1
 	#define _sam4s_ 1
@@ -132,7 +199,16 @@
 	#define _kii_v3_ 1
 #endif
 
-// sam4s16b (1028 kB)
+// sam4s8c (512 kB) 100-pin
+#if defined(_sam4s8c_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_c_ 1
+	#define _sam4s8_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4s16b (1028 kB) 64-pin
 #if defined(_sam4s16b_)
 	#define _sam_ 1
 	#define _sam4s_ 1
@@ -141,7 +217,16 @@
 	#define _kii_v3_ 1
 #endif
 
-// sam4sa16b (sam4s16b /w HCache) (1024 kB)
+// sam4s16c (1028 kB) 100-pin
+#if defined(_sam4s16c_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_c_ 1
+	#define _sam4s16_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4sa16b (sam4s16b /w HCache) (1024 kB) 64-pin
 #if defined(_sam4sa16b_)
 	#define _sam_ 1
 	#define _sam4s_ 1
@@ -152,7 +237,18 @@
 	#define _kii_v3_ 1
 #endif
 
-// sam4sd16b (HCache) (2 x 512 kB)
+// sam4sa16c (sam4s16b /w HCache) (1024 kB) 100-pin
+#if defined(_sam4sa16c_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_c_ 1
+	#define _sam4sa_ 1
+	#define _sam4sa16_ 1
+	#define _sam_hcache_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4sd16b (HCache) (2 x 512 kB) 64-pin
 #if defined(_sam4sd16b_)
 	#define _sam_ 1
 	#define _sam4s_ 1
@@ -163,7 +259,18 @@
 	#define _kii_v3_ 1
 #endif
 
-// sam4sd32b (HCache) (2 x 1028 kB)
+// sam4sd16c (HCache) (2 x 512 kB) 100-pin
+#if defined(_sam4sd16c_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_c_ 1
+	#define _sam4sd_ 1
+	#define _sam4sd16_ 1
+	#define _sam_hcache_ 1
+	#define _kii_v3_ 1
+#endif
+
+// sam4sd32b (HCache) (2 x 1024 kB) 64-pin
 #if defined(_sam4sd32b_)
 	#define _sam_ 1
 	#define _sam4s_ 1
@@ -172,6 +279,78 @@
 	#define _sam4sd32_ 1
 	#define _sam_hcache_ 1
 	#define _kii_v3_ 1
+#endif
+
+// sam4sd32c (HCache) (2 x 1024 kB) 100-pin
+#if defined(_sam4sd32c_)
+	#define _sam_ 1
+	#define _sam4s_ 1
+	#define _sam4s_c_ 1
+	#define _sam4sd_ 1
+	#define _sam4sd32_ 1
+	#define _sam_hcache_ 1
+	#define _kii_v3_ 1
+#endif
+
+
+
+// - nRF BLE ARM MCUs -
+
+// nRF52810-QCAA (192 kB) 32-pin
+#if defined(_nrf52810_qcaa_)
+	#define _nrf_ 1
+	#define _nrf5_ 1
+	#define _nrf52_ 1
+	#define _nrf528_ 1
+	#define _nrf52810_ 1
+#endif
+
+// nRF52810-QFAA (192 kB) 48-pin
+#if defined(_nrf52810_qfaa_)
+	#define _nrf_ 1
+	#define _nrf5_ 1
+	#define _nrf52_ 1
+	#define _nrf528_ 1
+	#define _nrf52810_ 1
+#endif
+
+// nRF52832-QFAA (512 kB) 48-pin
+#if defined(_nrf52832_qfaa_)
+	#define _nrf_ 1
+	#define _nrf5_ 1
+	#define _nrf52_ 1
+	#define _nrf528_ 1
+	#define _nrf52832_ 1
+	#define _nrf52832_a_ 1
+#endif
+
+// nRF52832-QFAB (256 kB) 48-pin
+#if defined(_nrf52832_qfab_)
+	#define _nrf_ 1
+	#define _nrf5_ 1
+	#define _nrf52_ 1
+	#define _nrf528_ 1
+	#define _nrf52832_ 1
+	#define _nrf52832_b_ 1
+#endif
+
+// nRF52832-CIAA (512 kB) 50-pin
+#if defined(_nrf52832_ciaa_)
+	#define _nrf_ 1
+	#define _nrf5_ 1
+	#define _nrf52_ 1
+	#define _nrf528_ 1
+	#define _nrf52832_ 1
+	#define _nrf52832_a_ 1
+#endif
+
+// nRF52840-QIAA (1024 kB) 73-pin
+#if defined(_nrf52840_qiaa_)
+	#define _nrf_ 1
+	#define _nrf5_ 1
+	#define _nrf52_ 1
+	#define _nrf528_ 1
+	#define _nrf52840_ 1
 #endif
 
 

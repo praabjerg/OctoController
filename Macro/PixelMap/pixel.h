@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2017 by Jacob Alexander
+/* Copyright (C) 2015-2018 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -107,6 +107,7 @@ typedef enum AnimationReplaceType {
 	AnimationReplaceType_None  = 0, // Don't replace (add new animation to stack if not full)
 	AnimationReplaceType_Basic = 1, // Replace only if the same trigger initiated
 	AnimationReplaceType_All   = 2, // Replace no matter what trigger initiated
+	AnimationReplaceType_State = 3, // Using same trigger, start on Activate/Press, stop on Deactivate/Release
 } AnimationReplaceType;
 
 // Animation Play State
@@ -123,6 +124,7 @@ typedef enum AnimationControl {
 	AnimationControl_Stop       = 3, // Clears all animations, then sets forward
 	AnimationControl_Reset      = 4, // Clears all animations, starts initial animations (sets forward)
 	AnimationControl_WipePause  = 5, // Pauses animations, clears the display
+	AnimationControl_Clear      = 6, // Clears the display, animations continue
 } AnimationControl;
 
 
@@ -202,7 +204,7 @@ typedef struct AnimationStackElement {
 } AnimationStackElement;
 
 // Animation stack
-#define Pixel_AnimationStackSize 20
+#define Pixel_AnimationStackSize Pixel_AnimationStackSize_define
 typedef struct AnimationStack {
 	uint16_t size;
 	AnimationStackElement *stack[Pixel_AnimationStackSize];

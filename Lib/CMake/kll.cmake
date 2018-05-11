@@ -1,6 +1,6 @@
 ###| CMAKE Kiibohd Controller KLL Configurator |###
 #
-# Written by Jacob Alexander in 2014-2017 for the Kiibohd Controller
+# Written by Jacob Alexander in 2014-2018 for the Kiibohd Controller
 #
 # Released into the Public Domain
 #
@@ -19,13 +19,15 @@ if ( "${MacroModule}" STREQUAL "PartialMap" OR "${MacroModule}" STREQUAL "PixelM
 # Check disabled for Win32 as it can't detect version correctly (we don't use Python directly through CMake anyways)
 #
 
-if ( NOT CMAKE_HOST_WIN32 )
+set ( PYTHON_EXECUTABLE
+	python3
+	CACHE STRING "Python 3 Executable Path"
+)
+if ( NOT "${DETECTED_BUILD_KERNEL}" MATCHES "CYGWIN" )
 	# Required on systems where python is 2, not 3
-	set ( PYTHON_EXECUTABLE
-		python3
-		CACHE STRING "Python 3 Executable Path"
-	)
 	find_package ( PythonInterp 3 REQUIRED )
+else ()
+	message ( STATUS "Python Executable: ${PYTHON_EXECUTABLE}" )
 endif ()
 
 
@@ -92,6 +94,10 @@ foreach ( MAP ${MAP_LIST} )
 		message ( FATAL " Could not find '${MAP}.kll' BaseMap in Scan module directory" )
 	endif ()
 endforeach ()
+if ( NOT "${BaseMap_Args}" STREQUAL "" )
+	# Prepend --base flag if there are BaseMap args
+	set ( BaseMap_Args --base ${BaseMap_Args} )
+endif ()
 
 #| Configure DefaultMap if specified
 if ( NOT "${DefaultMap}" STREQUAL "" )
@@ -112,6 +118,10 @@ if ( NOT "${DefaultMap}" STREQUAL "" )
 		endif ()
 	endforeach ()
 endif ()
+if ( NOT "${DefaultMap_Args}" STREQUAL "" )
+	# Prepend --default flag if there are DefaultMap args
+	set ( DefaultMap_Args --default ${DefaultMap_Args} )
+endif ()
 
 #| Configure PartialMaps if specified
 if ( NOT "${PartialMaps}" STREQUAL "" )
@@ -129,6 +139,9 @@ if ( NOT "${PartialMaps}" STREQUAL "" )
 			elseif ( EXISTS "${PROJECT_SOURCE_DIR}/kll/layouts/${MAP_PART}.kll" )
 				set ( PartialMap_Args ${PartialMap_Args} ${PROJECT_SOURCE_DIR}/kll/layouts/${MAP_PART}.kll )
 				set ( KLL_DEPENDS ${KLL_DEPENDS} ${PROJECT_SOURCE_DIR}/kll/layouts/${MAP_PART}.kll )
+			elseif ( EXISTS "${pathname}/${MAP_PART}.kll" )
+				set ( PartialMap_Args ${PartialMap_Args} ${pathname}/${MAP_PART}.kll )
+				set ( KLL_DEPENDS ${KLL_DEPENDS} ${pathname}/${MAP_PART}.kll )
 			elseif ( EXISTS "${pathname}/${MAP}.kll" )
 				set ( PartialMap_Args ${PartialMap_Args} ${pathname}/${MAP}.kll )
 				set ( KLL_DEPENDS ${KLL_DEPENDS} ${pathname}/${MAP}.kll )
@@ -161,7 +174,7 @@ set ( kll_outputname ${kll_keymap} ${kll_defs} ${kll_pixelmap} )
 
 #| KLL Version
 set ( kll_version_cmd
-	${PROJECT_SOURCE_DIR}/kll/kll
+	${PYTHON_EXECUTABLE} ${PROJECT_SOURCE_DIR}/kll/kll
 	--version
 )
 
@@ -178,11 +191,11 @@ endif ()
 
 #| KLL Cmd
 set ( kll_cmd
-	${PROJECT_SOURCE_DIR}/kll/kll
+	${PYTHON_EXECUTABLE} ${PROJECT_SOURCE_DIR}/kll/kll
 	--kiibohd-debug
 	--config ${Config_Args}
-	--base ${BaseMap_Args}
-	--default ${DefaultMap_Args}
+	${BaseMap_Args}
+	${DefaultMap_Args}
 	${PartialMap_Args}
 	--emitter ${kll_emitter}
 	--def-template ${PROJECT_SOURCE_DIR}/kll/templates/kiibohdDefs.h

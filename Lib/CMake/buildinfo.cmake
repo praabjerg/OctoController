@@ -96,6 +96,10 @@ execute_process ( COMMAND ${GIT_EXECUTABLE} rev-list -n 1 ${Git_Recent_Tag}
 	OUTPUT_STRIP_TRAILING_WHITESPACE
 	RESULT_VARIABLE res_var
 )
+#| If no tags set, just use HEAD
+if ( Git_Recent_Tag STREQUAL "" )
+	set ( Git_Recent_Tag_Revision "${Git_Commit_Revision}" )
+endif ()
 
 #| Most Recent Tag Commit Number (on branch)
 execute_process ( COMMAND ${GIT_EXECUTABLE} rev-list --count ${Git_Recent_Tag_Revision}
@@ -144,16 +148,17 @@ execute_process ( COMMAND "date" "+%Y-%m-%d %T %z"
 set ( GitLastCommitDate "${Git_Modified_Status} ${Git_Branch_INFO} - ${Git_Date_INFO}" )
 
 #| Build Platform
-message( STATUS "Build OS Detected:" )
 if ( "${DETECTED_BUILD_KERNEL}" MATCHES "Darwin" )
 	set( Build_OS ${CMAKE_SYSTEM} )
 
 elseif ( "${DETECTED_BUILD_KERNEL}" MATCHES "CYGWIN" )
 	set( Build_OS ${CMAKE_SYSTEM} )
 
-else () # Linux
-	find_program( LSB_RELEASE lsb_release )
-	execute_process( COMMAND ${LSB_RELEASE} -dcs
+elseif ( "${DETECTED_BUILD_KERNEL}" MATCHES "Linux" )
+	# lsb_release is required on Linux
+	find_package ( LSB REQUIRED )
+
+	execute_process( COMMAND ${LSB_RELEASE_EXECUTABLE} -dcs
 		OUTPUT_VARIABLE Build_OS
 		ERROR_QUIET
 		OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -162,6 +167,9 @@ else () # Linux
 	# Replace quotes to be compatible with C
 	string( REPLACE "\"" "'" Build_OS ${Build_OS} )
 	string( REPLACE "\n" " " Build_OS ${Build_OS} )
+else () # Unknown
+	set( Build_OS ${CMAKE_SYSTEM} )
 endif ()
+message( STATUS "Build OS Detected:" )
 message( "${Build_OS}" )
 

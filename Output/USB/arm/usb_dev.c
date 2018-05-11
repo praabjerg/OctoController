@@ -1,7 +1,7 @@
 /* Teensyduino Core Library
  * http://www.pjrc.com/teensy/
  * Copyright (c) 2013 PJRC.COM, LLC.
- * Modifications by Jacob Alexander (2013-2017)
+ * Modifications by Jacob Alexander (2013-2018)
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -37,6 +37,7 @@
 #include <kll_defs.h>
 
 // Local Includes
+#include "output_usb.h"
 #include "usb_dev.h"
 #include "usb_mem.h"
 
@@ -159,8 +160,10 @@ static uint8_t tx_state[NUM_ENDPOINTS];
 // transactions in the data phase start with DATA1 and toggle (figure 8-12, USB1.1)
 // Status stage uses a DATA1 PID.
 
+#if defined(_kinetis_)
 static uint8_t ep0_rx0_buf[EP0_SIZE] __attribute__ ((aligned (4)));
 static uint8_t ep0_rx1_buf[EP0_SIZE] __attribute__ ((aligned (4)));
+#endif
 static const uint8_t *ep0_tx_ptr = NULL;
 static uint16_t ep0_tx_len;
 static uint8_t ep0_tx_bdt_bank = 0;
@@ -176,6 +179,7 @@ static uint8_t power_neg_delay;
 static uint32_t power_neg_time;
 
 static uint8_t usb_dev_sleep = 0;
+static uint8_t usb_remote_wakeup = 0;
 
 
 
@@ -189,7 +193,12 @@ static void endpoint0_stall()
 	print(" ms");
 	print(NL);
 	#endif
+
+#if defined(_kinetis_)
 	USB0_ENDPT0 = USB_ENDPT_EPSTALL | USB_ENDPT_EPRXEN | USB_ENDPT_EPTXEN | USB_ENDPT_EPHSHK;
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 }
 
 static void endpoint0_transmit( const void *data, uint32_t len )
@@ -203,8 +212,12 @@ static void endpoint0_transmit( const void *data, uint32_t len )
 void usb_reinit()
 {
 	usb_configuration = 0; // Clear USB configuration if we have one
+#if defined(_kinetis_)
 	USB0_CONTROL = 0; // Disable D+ Pullup to simulate disconnect
-	delay(10); // Delay is necessary to simulate disconnect
+#elif defined(_sam_)
+	//SAM TODO
+#endif
+	delay_ms(10); // Delay is necessary to simulate disconnect
 	usb_init();
 }
 
@@ -272,6 +285,8 @@ static void usb_setup()
 	switch ( setup.wRequestAndType )
 	{
 	case 0x0500: // SET_ADDRESS
+		// Device behaviour is undefined if address is greater than 127
+		USBDev_Address = setup.wValue;
 		goto send;
 
 	case 0x0900: // SET_CONFIGURATION
@@ -280,7 +295,11 @@ static void usb_setup()
 		#endif
 		usb_configuration = setup.wValue;
 		Output_Available = usb_configuration;
+#if defined(_kinetis_)
 		reg = &USB0_ENDPT1;
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 		cfg = usb_endpoint_config_table;
 
 		// Now configured so we can utilize bMaxPower now
@@ -338,6 +357,7 @@ static void usb_setup()
 			epconf = *cfg++;
 			*reg = epconf;
 			reg += 4;
+#if defined(_kinetis_)
 			if ( epconf & USB_ENDPT_EPRXEN )
 			{
 				usb_packet_t *p;
@@ -366,6 +386,9 @@ static void usb_setup()
 			}
 			table[ index( i, TX, EVEN ) ].desc = 0;
 			table[ index( i, TX, ODD ) ].desc = 0;
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 		}
 		goto send;
 
@@ -376,6 +399,14 @@ static void usb_setup()
 		goto send;
 
 	case 0x0080: // GET_STATUS (device)
+		// XXX (HaaTa): D0 is set to 1 if device is self-powered
+		reply_buffer[0] = (usb_remote_wakeup ? 1 : 0) << 1; // D1 is the remote wakeup bit
+		reply_buffer[1] = 0;
+		datalen = 2;
+		data = reply_buffer;
+		goto send;
+
+	case 0x0081: // GET_STATUS (interface)
 		reply_buffer[0] = 0;
 		reply_buffer[1] = 0;
 		datalen = 2;
@@ -383,27 +414,44 @@ static void usb_setup()
 		goto send;
 
 	case 0x0082: // GET_STATUS (endpoint)
-		if ( setup.wIndex > NUM_ENDPOINTS )
+	{
+		//uint8_t direction = setup.wIndex & 0x80; // D7 Direction
+		uint8_t endpoint = setup.wIndex & 0x0F; // D0..D3 Endpoint Number
+
+		// Make sure this is a valid endpoint
+		if ( endpoint > NUM_ENDPOINTS )
 		{
-			// TODO: do we need to handle IN vs OUT here?
 			endpoint0_stall();
 			return;
 		}
+
 		reply_buffer[0] = 0;
 		reply_buffer[1] = 0;
-		if ( *(uint8_t *)(&USB0_ENDPT0 + setup.wIndex * 4) & 0x02 )
+#if defined(_kinetis_)
+		// Check if endpoint is stalled/halted (USB_ENDPT_EPSTALL)
+		// There are 16 endpoint registers, each are 1 byte, 4 byte spacing
+		if ( *(uint8_t *)(&USB0_ENDPT0 + endpoint * 4) & USB_ENDPT_EPSTALL )
+		{
 			reply_buffer[0] = 1;
+		}
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 		data = reply_buffer;
 		datalen = 2;
 		goto send;
+	}
 
 	case 0x0100: // CLEAR_FEATURE (device)
 		switch ( setup.wValue )
 		{
-		// CLEAR_FEATURE(DEVICE_REMOTE_WAKEUP)
-		// See SET_FEATURE(DEVICE_REMOTE_WAKEUP) for details
-		case 0x1:
+		case 0x1: // CLEAR_FEATURE(DEVICE_REMOTE_WAKEUP)
+			usb_remote_wakeup = 0;
 			goto send;
+
+		// XXX (HaaTa): Not implemented
+		case 0x2: // CLEAR_FEATURE(TEST_MODE)
+			break;
 		}
 
 		warn_msg("SET_FEATURE - Device wValue(");
@@ -413,7 +461,7 @@ static void usb_setup()
 		return;
 
 	case 0x0101: // CLEAR_FEATURE (interface)
-		// TODO: Currently ignoring, perhaps useful? -HaaTa
+		// XXX (HaaTa): Not used for USB 2.0
 		warn_msg("CLEAR_FEATURE - Interface wValue(");
 		printHex( setup.wValue );
 		print(") wIndex(");
@@ -423,26 +471,56 @@ static void usb_setup()
 		return;
 
 	case 0x0102: // CLEAR_FEATURE (endpoint)
-		i = setup.wIndex & 0x7F;
-		if ( i > NUM_ENDPOINTS || setup.wValue != 0 )
+	{
+		//uint8_t direction = setup.wIndex & 0x80; // D7 Direction
+		uint8_t endpoint = setup.wIndex & 0x0F; // D0..D3 Endpoint Number
+
+		// Must be wValue 0 (clear endpoint halt)
+		if ( endpoint > NUM_ENDPOINTS || setup.wValue != 0 )
 		{
 			endpoint0_stall();
 			return;
 		}
-		(*(uint8_t *)(&USB0_ENDPT0 + setup.wIndex * 4)) &= ~0x02;
-		// TODO: do we need to clear the data toggle here?
+#if defined(_kinetis_)
+		// Unset endpoint stall/halt (USB_ENDPT_EPSTALL)
+		// There are 16 endpoint registers, each are 1 byte, 4 byte spacing
+		(*(uint8_t *)(&USB0_ENDPT0 + endpoint * 4)) &= ~USB_ENDPT_EPSTALL;
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 		goto send;
+	}
 
 	case 0x0300: // SET_FEATURE (device)
 		switch ( setup.wValue )
 		{
-		// SET_FEATURE(DEVICE_REMOTE_WAKEUP)
 		// XXX: Only used to confirm Remote Wake
 		//      Used on Mac OSX and Windows not on Linux
 		// Good post on the behaviour:
 		// http://community.silabs.com/t5/8-bit-MCU/Remote-wakeup-HID/m-p/74957#M30802
-		case 0x1:
+		case 0x1: // SET_FEATURE(DEVICE_REMOTE_WAKEUP)
+			usb_remote_wakeup = 1;
 			goto send;
+
+		// XXX (HaaTa): Not implemented
+		case 0x2: // SET_FEATURE(TEST_MODE)
+			switch ( setup.wIndex )
+			{
+			case 0x1: // Test_J
+				break;
+			case 0x2: // Test_K
+				break;
+			case 0x3: // Test_SE0_NAK
+				break;
+			case 0x4: // Test_Packet
+				break;
+			case 0x5: // Test_Force_Enabled
+				break;
+			// 0x06..0x3F - Reserved for Standard test selectors
+			// 0x40..0xBF - Reserved
+			// 0xC0..0xFF - Reserved for vendor-specific test modes
+			}
+			break;
 		}
 
 		warn_msg("SET_FEATURE - Device wValue(");
@@ -452,7 +530,7 @@ static void usb_setup()
 		return;
 
 	case 0x0301: // SET_FEATURE (interface)
-		// TODO: Currently ignoring, perhaps useful? -HaaTa
+		// XXX (HaaTa): Not used for USB 2.0
 		warn_msg("SET_FEATURE - Interface wValue(");
 		printHex( setup.wValue );
 		print(") wIndex(");
@@ -462,19 +540,76 @@ static void usb_setup()
 		return;
 
 	case 0x0302: // SET_FEATURE (endpoint)
-		i = setup.wIndex & 0x7F;
-		if ( i > NUM_ENDPOINTS || setup.wValue != 0 )
+	{
+		//uint8_t direction = setup.wIndex & 0x80; // D7 Direction
+		uint8_t endpoint = setup.wIndex & 0x0F; // D0..D3 Endpoint Number
+
+		// Must be wValue 0 (clear endpoint halt)
+		if ( endpoint > NUM_ENDPOINTS || setup.wValue != 0 )
 		{
-			// TODO: do we need to handle IN vs OUT here?
 			endpoint0_stall();
 			return;
 		}
-		(*(uint8_t *)(&USB0_ENDPT0 + setup.wIndex * 4)) |= 0x02;
-		// TODO: do we need to clear the data toggle here?
+#if defined(_kinetis_)
+		// Set endpoint stall/halt (USB_ENDPT_EPSTALL)
+		// There are 16 endpoint registers, each are 1 byte, 4 byte spacing
+		(*(uint8_t *)(&USB0_ENDPT0 + endpoint * 4)) |= USB_ENDPT_EPSTALL;
+#elif defined(_sam_)
+		//SAM TODO
+#endif
+		goto send;
+	}
+
+	case 0x0A81: // GET_INTERFACE (interface)
+		// XXX (HaaTa): bAlternateSetting is not supported (yet)
+		// Stall on invalid interfaces
+		if ( setup.wIndex > NUM_INTERFACES )
+		{
+			endpoint0_stall();
+			return;
+		}
+		reply_buffer[0] = 0;
+		datalen = 1;
+		data = reply_buffer;
 		goto send;
 
-	case 0x0680: // GET_DESCRIPTOR
-	case 0x0681:
+	case 0x0B01: // SET_INTERFACE (interface)
+		// XXX (HaaTa): bAlternateSetting is not supported (yet)
+		if ( setup.wIndex > NUM_INTERFACES || setup.wValue != 0 )
+		{
+			endpoint0_stall();
+			return;
+		}
+		goto send;
+
+	case 0x0C82: // SYNCH_FRAME
+	{
+		// XXX (HaaTa): Only necessary for isochronous endpoints
+		//uint8_t direction = setup.wIndex & 0x80; // D7 Direction
+		uint8_t endpoint = setup.wIndex & 0x0F; // D0..D3 Endpoint Number
+
+		// Valid endpoint
+		if ( endpoint <= NUM_ENDPOINTS )
+		{
+			// Isochronous endpoint, USB_ENDPT_EPHSHK is set to 0
+			if ( ( (*(uint8_t *)(&USB0_ENDPT0 + endpoint * 4)) & USB_ENDPT_EPHSHK ) == 0 )
+			{
+				// TODO (HaaTa): Implement synchronization frames
+				reply_buffer[0] = 0;
+				reply_buffer[1] = 0;
+				datalen = 2;
+				data = reply_buffer;
+				goto send;
+			}
+		}
+
+		// Invalid request
+		endpoint0_stall();
+		return;
+	}
+
+	case 0x0680: // GET_DESCRIPTOR (device)
+	case 0x0681: // HID GET_DESCRIPTOR
 		#ifdef UART_DEBUG
 		print("desc:");
 		printHex( setup.wValue );
@@ -482,11 +617,18 @@ static void usb_setup()
 		#endif
 		for ( list = usb_descriptor_list; 1; list++ )
 		{
+			// No more items in the descriptor list
 			if ( list->addr == NULL )
+			{
 				break;
+			}
+
+			// Found a matching descriptor
 			if ( setup.wValue == list->wValue && setup.wIndex == list->wIndex )
 			{
 				data = list->addr;
+
+				// Check if string descriptor
 				if ( (setup.wValue >> 8) == 3 )
 				{
 					// for string descriptors, use the descriptor's
@@ -604,10 +746,19 @@ static void usb_setup()
 		// Search through descriptors returning necessary info
 		for ( list = usb_descriptor_list; 1; list++ )
 		{
+			// No more items in the descriptor list
 			if ( list->addr == NULL )
+			{
 				break;
+			}
+
+			// Found a descriptor
 			if ( list->wValue != 0x2200 )
+			{
 				continue;
+			}
+
+			// Indices match
 			if ( setup.wIndex == list->wIndex )
 			{
 				data = list->addr;
@@ -668,7 +819,7 @@ static void usb_setup()
 		}
 
 		// Request protocol update
-		USBKeys_Protocol_New = 1;
+		USBKeys_Protocol_Change = 1;
 
 		goto send;
 
@@ -680,7 +831,7 @@ static void usb_setup()
 		printHex( USBKeys_Protocol );
 		print(NL);
 		#endif
-		reply_buffer[0] = USBKeys_Protocol;
+		reply_buffer[0] = USBKeys_Protocol_New; // Must be the same data set by SET_PROTOCOL
 		data = reply_buffer;
 		datalen = 1;
 		goto send;
@@ -830,7 +981,11 @@ static void usb_control( uint32_t stat )
 		// actually "do" the setup request
 		usb_setup();
 		// unfreeze the USB, now that we're ready
+#if defined(_kinetis_)
 		USB0_CTL = USB_CTL_USBENSOFEN; // clear TXSUSPENDTOKENBUSY bit
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 		break;
 
 	case 0x01:  // OUT transaction received from host
@@ -914,14 +1069,12 @@ static void usb_control( uint32_t stat )
 			// Keyboard Interface
 			case KEYBOARD_INTERFACE:
 				USBKeys_LEDs = buf[0];
-				USBKeys_LEDs_Changed = 1;
 				break;
 			// NKRO Keyboard Interface
 			case NKRO_KEYBOARD_INTERFACE:
 				// Already set with the control sequence
 				// Only use 2nd byte, first byte is the report id
 				USBKeys_LEDs = buf[1];
-				USBKeys_LEDs_Changed = 1;
 				break;
 			default:
 				warn_msg("(SET_REPORT, BULK) Unknown interface - ");
@@ -985,7 +1138,11 @@ static void usb_control( uint32_t stat )
 			printHex(setup.wValue);
 			print(NL);
 			#endif
+#if defined(_kinetis_)
 			USB0_ADDR = setup.wValue;
+#elif defined(_sam_)
+			//SAM TODO
+#endif
 		}
 
 		// CDC_SET_LINE_CODING - PID=IN
@@ -1020,7 +1177,11 @@ static void usb_control( uint32_t stat )
 		#endif
 		break;
 	}
+#if defined(_kinetis_)
 	USB0_CTL = USB_CTL_USBENSOFEN; // clear TXSUSPENDTOKENBUSY bit
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 }
 
 usb_packet_t *usb_rx( uint32_t endpoint )
@@ -1111,6 +1272,7 @@ void usb_rx_memory( usb_packet_t *packet )
 	__disable_irq();
 	for ( i = 1; i <= NUM_ENDPOINTS; i++ )
 	{
+#if defined(_kinetis_)
 		if ( *cfg++ & USB_ENDPT_EPRXEN )
 		{
 			if ( table[ index( i, RX, EVEN ) ].desc == 0 )
@@ -1134,6 +1296,12 @@ void usb_rx_memory( usb_packet_t *packet )
 				return;
 			}
 		}
+#elif defined(_sam_)
+	//SAM TODO
+	if ( *cfg++ & 0 )
+	{
+	}
+#endif
 	}
 	__enable_irq();
 	// we should never reach this point.  If we get here, it means
@@ -1144,26 +1312,37 @@ void usb_rx_memory( usb_packet_t *packet )
 	return;
 }
 
+// Check if USB bus is suspended/sleeping
+uint8_t usb_suspended()
+{
+	return usb_dev_sleep;
+}
+
 // Call whenever there's an action that may wake the host device
 uint8_t usb_resume()
 {
 	// If we have been sleeping, try to wake up host
-	if ( usb_dev_sleep && usb_configured() )
+	if ( usb_dev_sleep && usb_configured() && usb_remote_wakeup )
 	{
-		#if enableUSBResume_define == 1
-		#if enableVirtualSerialPort_define != 1
+#if enableUSBResume_define == 1
+#if enableVirtualSerialPort_define != 1
 		info_print("Attempting to resume the host");
-		#endif
-		// Force wake-up for 10 ms
+#endif
 		// According to the USB Spec a device must hold resume for at least 1 ms but no more than 15 ms
+		// After setting to RESUME, send a packet, delay then unset RESUME
+#if defined(_kinetis_)
 		USB0_CTL |= USB_CTL_RESUME;
-		delay(10);
+		usb_packet_t *tx_packet = usb_malloc();
+		usb_tx( KEYBOARD_ENDPOINT, tx_packet );
+		delay_ms(10);
 		USB0_CTL &= ~(USB_CTL_RESUME);
-		delay(50); // Wait for at least 50 ms to make sure the bus is clear
+#elif defined(_sam_)
+		//SAM TODO
+#endif
 		usb_dev_sleep = 0; // Make sure we don't call this again, may crash system
-		#else
+#else
 		warn_print("Host Resume Disabled");
-		#endif
+#endif
 
 		return 1;
 	}
@@ -1232,7 +1411,7 @@ void usb_device_reload()
 {
 // MCHCK
 // Kiibohd mk20dx256vlh7
-#if defined(_kii_v2_)
+#if defined(_kii_v1_) || defined(_kii_v2_)
 	// Copies variable into the VBAT register, must be identical to the variable in the bootloader to jump to the bootloader flash mode
 	for ( int pos = 0; pos < sizeof(sys_reset_to_loader_magic); pos++ )
 		(&VBAT)[ pos ] = sys_reset_to_loader_magic[ pos ];
@@ -1247,6 +1426,7 @@ void usb_device_reload()
 
 void usb_isr()
 {
+#if defined(_kinetis_)
 	uint8_t status, stat, t;
 
 restart:
@@ -1270,7 +1450,7 @@ restart:
 			}
 
 			// CDC Interface
-			#if enableVirtualSerialPort_define == 1
+#if enableVirtualSerialPort_define == 1
 			t = usb_cdc_transmit_flush_timer;
 			if ( t )
 			{
@@ -1278,7 +1458,7 @@ restart:
 				if ( t == 0 )
 					usb_serial_flush_callback();
 			}
-			#endif
+#endif
 
 		}
 
@@ -1309,7 +1489,7 @@ restart:
 		{
 			bdt_t *b = stat2bufferdescriptor(stat);
 			usb_packet_t *packet = (usb_packet_t *)((uint8_t *)(b->addr) - 8);
-#if 0
+			#if 0
 			serial_print("ep:");
 			serial_phex(endpoint);
 			serial_print(", pid:");
@@ -1318,7 +1498,7 @@ restart:
 			serial_print(", count:");
 			serial_phex(b->desc >> 16);
 			serial_print("\n");
-#endif
+			#endif
 			endpoint--;     // endpoint is index to zero-based arrays
 
 			if ( stat & 0x08 )
@@ -1457,14 +1637,13 @@ restart:
 		// set the address to zero during enumeration
 		USB0_ADDR = 0;
 
-		// enable other interrupts
+		// enable other interrupts (except USB Resume)
 		USB0_ERREN = 0xFF;
 		USB0_INTEN = USB_INTEN_TOKDNEEN |
 			USB_INTEN_SOFTOKEN |
 			USB_INTEN_STALLEN |
 			USB_INTEN_ERROREN |
 			USB_INTEN_USBRSTEN |
-			USB_INTEN_RESUMEEN |
 			USB_INTEN_SLEEPEN;
 
 		// is this necessary?
@@ -1495,14 +1674,22 @@ restart:
 	{
 #if enableUSBSuspend_define == 1
 		// Can cause issues with the virtual serial port
-		#if enableVirtualSerialPort_define != 1
+#if enableVirtualSerialPort_define != 1
 		info_print("Host has requested USB sleep/suspend state");
-		#endif
-		Output_update_usb_current( 100 ); // Set to 100 mA
-		usb_dev_sleep = 1;
+#endif
+		if ( !usb_dev_sleep )
+		{
+			Output_update_usb_current( 100 ); // Set to 100 mA
+			usb_dev_sleep = 1;
+		}
 #else
 		info_print("USB Suspend Detected - Firmware USB Suspend Disabled");
 #endif
+		// Enable USB resume interrupt
+		// Only allowed to be enabled while suspended
+		USB0_INTEN |= USB_INTEN_RESUMEEN;
+		USB0_INTEN &= ~(USB_INTEN_SLEEPEN);
+
 		USB0_ISTAT |= USB_ISTAT_SLEEP;
 	}
 
@@ -1510,13 +1697,26 @@ restart:
 	if ( (status & USB_ISTAT_RESUME /* 20 */ ) )
 	{
 		// Can cause issues with the virtual serial port
-		#if enableVirtualSerialPort_define != 1
+#if enableVirtualSerialPort_define != 1
 		info_print("Host has woken-up/resumed from sleep/suspend state");
-		#endif
+#endif
 		Output_update_usb_current( *usb_bMaxPower * 2 );
 		usb_dev_sleep = 0;
+
+		// Disable USB resume interrupt
+		// Only allowed to be enabled while suspended
+		USB0_INTEN &= ~(USB_INTEN_RESUMEEN);
+		USB0_INTEN |= USB_INTEN_SLEEPEN;
+
 		USB0_ISTAT |= USB_ISTAT_RESUME;
 	}
+#elif defined(_sam_)
+	//SAM TODO
+	if (0)
+	{
+		usb_control(0); //avoid unused warning
+	}
+#endif
 }
 
 
@@ -1554,6 +1754,7 @@ uint8_t usb_init()
 		table[i].addr = 0;
 	}
 
+#if defined(_kinetis_)
 	// this basically follows the flowchart in the Kinetis
 	// Quick Reference User Guide, Rev. 1, 03/2012, page 141
 
@@ -1590,12 +1791,20 @@ uint8_t usb_init()
 
 	// enable d+ pullup
 	USB0_CONTROL = USB_CONTROL_DPPULLUPNONOTG;
+#elif defined(_sam_)
+	//SAM TODO
+#endif
 
 	// Do not check for power negotiation delay until Get Configuration Descriptor
 	power_neg_delay = 0;
 
 	// During initialization host isn't sleeping
 	usb_dev_sleep = 0;
+
+	// XXX (HaaTa)
+	// Make sure remote wakeup is set initially as we want to wake-up by default
+	// The OS will override this if necessary
+	usb_remote_wakeup = 1;
 
 	return 1;
 }

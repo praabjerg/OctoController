@@ -24,6 +24,12 @@
  * along with Entropy.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+// ----- Target Includes -----
+
+#include "mcu_compat.h"
+
+
+
 #if defined(_host_)
 
 
@@ -61,13 +67,14 @@ uint32_t rand_value32()
 }
 
 
-#else
+#elif defined(_kinetis_)
 
 
 // ----- Includes -----
 
 #include "atomic.h"
 #include "entropy.h"
+
 #include "kinetis.h"
 
 
@@ -216,5 +223,83 @@ void lptmr_isr()
 }
 
 
+#elif defined(_sam_)
+
+
+// ----- Includes -----
+
+#include <stdlib.h>
+#include "entropy.h"
+
+#include "sam.h"
+
+
+
+// ----- Functions -----
+
+void rand_initialize()
+{
+	// TODO (HaaTa)
+}
+
+void rand_disable()
+{
+	// TODO (HaaTa)
+}
+
+uint8_t rand_available()
+{
+	// TODO (HaaTa)
+	return 1;
+}
+
+// Pseudo-random value using clock
+uint32_t rand_value32()
+{
+	// TODO (HaaTa)
+	return 0;
+}
+
+
+#elif defined(_nrf_)
+
+
+// ----- Includes -----
+
+#include <stdlib.h>
+#include "entropy.h"
+
+#include "sam.h"
+
+
+
+// ----- Functions -----
+
+void rand_initialize()
+{
+	// TODO (HaaTa)
+}
+
+void rand_disable()
+{
+	// TODO (HaaTa)
+}
+
+uint8_t rand_available()
+{
+	// TODO (HaaTa)
+	return 1;
+}
+
+// Pseudo-random value using clock
+uint32_t rand_value32()
+{
+	// TODO (HaaTa)
+	return 0;
+}
+
+
+#else
+#error "Unknown build target for Lib/entropy"
 #endif
 

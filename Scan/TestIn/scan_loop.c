@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2017 by Jacob Alexander
+/* Copyright (C) 2014-2018 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -110,13 +110,13 @@ inline void Scan_finishedWithOutput( uint8_t sentKeys )
 // Returns 1 if added, 0 if the ScanCode is already in the buffer
 // Returns 2 if there's an error
 // Generally 1 will be the return
-int Scan_addScanCode( uint8_t scanCode )
+int Scan_addScanCode( uint8_t index, uint8_t type )
 {
 	// Add key event to macro key buffer
 	TriggerGuide guide = {
-		.type     = 0x00,
-		.state    = 0x01, // Press
-		.scanCode = scanCode,
+		.type     = type,
+		.state    = ScheduleType_P, // Press
+		.scanCode = index,
 	};
 
 	return Macro_pressReleaseAdd( &guide );
@@ -127,13 +127,13 @@ int Scan_addScanCode( uint8_t scanCode )
 // Returns 1 if added, 0 if the ScanCode is already in the buffer
 // Returns 2 if there's an error
 // Generally 0 will be the return
-int Scan_removeScanCode( uint8_t scanCode )
+int Scan_removeScanCode( uint8_t index, uint8_t type )
 {
 	// Add key event to macro key buffer
 	TriggerGuide guide = {
-		.type     = 0x00,
-		.state    = 0x03, // Release
-		.scanCode = scanCode,
+		.type     = type,
+		.state    = ScheduleType_R, // Release
+		.scanCode = index,
 	};
 
 	return Macro_pressReleaseAdd( &guide );

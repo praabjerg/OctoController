@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2017 by Jacob Alexander
+/* Copyright (C) 2014-2018 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -29,7 +29,7 @@
 
 // UART Includes
 #if defined(_avr_at_)
-#elif defined(_kinetis_)
+#elif defined(_kinetis_) || defined(_sam_)
 #include "arm/uart_serial.h"
 #endif
 
@@ -37,7 +37,8 @@
 #include <kll.h>
 
 // Local Includes
-#include "output_com.h"
+#include <output_com.h>
+#include "output_uart.h"
 
 
 
@@ -110,7 +111,7 @@ inline int UART_putstr( char* str )
 {
 #if defined(_avr_at_) // AVR
 	uint16_t count = 0;
-#elif defined(_kinetis_) // ARM
+#elif defined(_kinetis_) || defined(_sam_) // ARM
 	uint32_t count = 0;
 #endif
 	// Count characters until NULL character, then send the amount counted
@@ -125,7 +126,7 @@ inline int UART_putstr( char* str )
 inline void UART_softReset()
 {
 #if defined(_avr_at_) // AVR
-#elif defined(_kinetis_) // ARM
+#elif defined(_kinetis_) || defined(_sam_) // ARM
 	SOFTWARE_RESET();
 #endif
 }

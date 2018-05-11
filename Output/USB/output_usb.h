@@ -1,4 +1,4 @@
-/* Copyright (C) 2013-2017 by Jacob Alexander
+/* Copyright (C) 2013-2018 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -59,10 +59,12 @@ typedef enum USBKeyChangeState {
 // Allows for selective USB descriptor pushes
 // However, in most cases everything is updated for each packet push
 typedef enum USBMouseChangeState {
-	USBMouseChangeState_None     = 0x00,
-	USBMouseChangeState_Buttons  = 0x01,
-	USBMouseChangeState_Relative = 0x02,
-	USBMouseChangeState_All      = 0x03,
+	USBMouseChangeState_None      = 0x00,
+	USBMouseChangeState_Buttons   = 0x01,
+	USBMouseChangeState_Relative  = 0x02,
+	USBMouseChangeState_WheelVert = 0x04,
+	USBMouseChangeState_WheelHori = 0x08,
+	USBMouseChangeState_All       = 0xFF,
 } USBMouseChangeState;
 
 
@@ -99,15 +101,17 @@ extern volatile USBKeys  USBKeys_idle;
 
 extern volatile uint8_t  USBKeys_Sent;
 extern volatile uint8_t  USBKeys_LEDs;
-extern volatile uint8_t  USBKeys_LEDs_Changed;
+extern volatile uint8_t  USBKeys_LEDs_prev;
 
 extern volatile uint8_t  USBKeys_Protocol; // 0 - Boot Mode, 1 - NKRO Mode
 extern volatile uint8_t  USBKeys_Protocol_New;
 extern volatile uint8_t  USBKeys_Protocol_Change;
 
 extern volatile uint16_t USBMouse_Buttons; // Bitmask for mouse buttons
-extern volatile uint16_t USBMouse_Relative_x;
-extern volatile uint16_t USBMouse_Relative_y;
+extern volatile int16_t  USBMouse_Relative_x;
+extern volatile int16_t  USBMouse_Relative_y;
+extern volatile int8_t   USBMouse_VertWheel;
+extern volatile int8_t   USBMouse_HoriWheel;
 
 // Keeps track of the idle timeout refresh (used on Mac OSX)
 extern volatile uint8_t  USBKeys_Idle_Config;
@@ -118,13 +122,15 @@ extern USBMouseChangeState USBMouse_Changed;
 
 extern volatile uint8_t  Output_Available; // 0 - Output module not fully functional, 1 - Output module working
 
-extern          uint8_t  Output_DebugMode; // 0 - Debug disabled, 1 - Debug enabled
+extern          uint8_t  Output_DebugMode; // 0 - Debug disabled, 1 - Debug enabled, 2 - Extra debug
 
 extern          uint16_t Output_ExtCurrent_Available; // mA - Set by outside module if not using USB (i.e. Interconnect)
 
 extern volatile uint32_t USBInit_TimeStart; // Timetamp when usb_init was triggered
 extern volatile uint32_t USBInit_TimeEnd;   // Timetamp since last call to the Configuration endpoint
 extern volatile uint16_t USBInit_Ticks;     // Number of times the end time has been updated
+
+extern volatile uint8_t  USBDev_Address;    // USB Address - Set by host, unique to the bus
 
 
 
@@ -148,4 +154,9 @@ int USB_putstr( char* str );
 unsigned int USB_rawio_availablechar();
 int USB_rawio_getbuffer( char* buffer );
 int USB_rawio_sendbuffer( char* buffer );
+
+void USB_ConsCtrlDebug( USBKeys *buffer );
+void USB_SysCtrlDebug( USBKeys *buffer );
+void USB_6KRODebug( USBKeys *buffer );
+void USB_NKRODebug( USBKeys *buffer );
 

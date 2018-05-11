@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2017 by Jacob Alexander
+/* Copyright (C) 2011-2018 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -83,6 +83,7 @@ uint16_t Output_USBCurrent_Available;
 // Ignored capabilities
 void Output_ignored_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args ) {}
 
+#if !defined(_APPLE_)
 void Output_kbdProtocolBoot_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 	__attribute__ ((weak, alias("Output_ignored_capability")));
 void Output_kbdProtocolNKRO_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
@@ -99,6 +100,9 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 	__attribute__ ((weak, alias("Output_ignored_capability")));
 void Output_usbMouse_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 	__attribute__ ((weak, alias("Output_ignored_capability")));
+void Output_usbMouseWheel_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+	__attribute__ ((weak, alias("Output_ignored_capability")));
+#endif
 
 // Jump to bootloader capability
 void Output_flashMode_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
@@ -204,6 +208,17 @@ unsigned int Output_current_available()
 
 void cliFunc_current( char* args )
 {
+	// Parse number from argument
+	//  NOTE: Only first argument is used
+	char* arg1Ptr;
+	char* arg2Ptr;
+	CLI_argumentIsolation( args, &arg1Ptr, &arg2Ptr );
+
+	if ( arg1Ptr[0] != '\0' )
+	{
+		Output_update_external_current( (unsigned int)numToInt( arg1Ptr ) );
+	}
+
 	print( NL );
 	info_msg("Current available: ");
 	printInt16( Output_current_available() );

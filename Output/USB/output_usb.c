@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2017 by Jacob Alexander
+/* Copyright (C) 2011-2018 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,7 +35,7 @@
 // USB Includes
 #if defined(_avr_at_)
 #include "avr/usb_keyboard_serial.h"
-#elif defined(_kinetis_)
+#elif defined(_kinetis_) || defined(_sam_)
 #include "arm/usb_dev.h"
 #include "arm/usb_keyboard.h"
 #include "arm/usb_mouse.h"
@@ -72,6 +72,7 @@
 void cliFunc_idle       ( char* args );
 void cliFunc_kbdProtocol( char* args );
 void cliFunc_readLEDs   ( char* args );
+void cliFunc_usbAddr    ( char* args );
 void cliFunc_usbInitTime( char* args );
 
 
@@ -82,12 +83,14 @@ void cliFunc_usbInitTime( char* args );
 CLIDict_Entry( idle,        "Show/set the HID Idle time (multiples of 4 ms)." );
 CLIDict_Entry( kbdProtocol, "Keyboard Protocol Mode: 0 - Boot, 1 - OS/NKRO Mode." );
 CLIDict_Entry( readLEDs,    "Read LED byte:" NL "\t\t1 NumLck, 2 CapsLck, 4 ScrlLck, 16 Kana, etc." );
+CLIDict_Entry( usbAddr,     "Shows the negotiated USB unique Id, given to device by host." );
 CLIDict_Entry( usbInitTime, "Displays the time in ms from usb_init() till the last setup call." );
 
 CLIDict_Def( usbCLIDict, "USB Module Commands" ) = {
 	CLIDict_Item( idle ),
 	CLIDict_Item( kbdProtocol ),
 	CLIDict_Item( readLEDs ),
+	CLIDict_Item( usbAddr ),
 	CLIDict_Item( usbInitTime ),
 	{ 0, 0, 0 } // Null entry for dictionary end
 };
@@ -101,15 +104,19 @@ volatile USBKeys USBKeys_idle;    // Idle timeout send buffer
 volatile uint8_t  USBKeys_Sent;
 
 // 1=num lock, 2=caps lock, 4=scroll lock, 8=compose, 16=kana
-volatile uint8_t  USBKeys_LEDs = 0;
-volatile uint8_t  USBKeys_LEDs_Changed;
+volatile uint8_t  USBKeys_LEDs;
+volatile uint8_t  USBKeys_LEDs_prev;
 
 // Currently pressed mouse buttons, bitmask, 0 represents no buttons pressed
-volatile uint16_t USBMouse_Buttons = 0;
+volatile uint16_t USBMouse_Buttons;
 
 // Relative mouse axis movement, stores pending movement
-volatile uint16_t USBMouse_Relative_x = 0;
-volatile uint16_t USBMouse_Relative_y = 0;
+volatile int16_t USBMouse_Relative_x;
+volatile int16_t USBMouse_Relative_y;
+
+// Mouse wheel pending action
+volatile int8_t USBMouse_VertWheel;
+volatile int8_t USBMouse_HoriWheel;
 
 // Protocol setting from the host.
 // 0 - Boot Mode
@@ -119,7 +126,7 @@ volatile uint8_t  USBKeys_Protocol_New = USBProtocol_define;
 volatile uint8_t  USBKeys_Protocol_Change; // New value to set to USBKeys_Protocol if _Change is set
 
 // Indicate if USB should send update
-USBMouseChangeState USBMouse_Changed = 0;
+USBMouseChangeState USBMouse_Changed;
 
 // the idle configuration, how often we send the report to the
 // host (ms * 4) even when it hasn't changed
@@ -127,13 +134,16 @@ USBMouseChangeState USBMouse_Changed = 0;
 volatile uint8_t  USBKeys_Idle_Config = USBIdle_define;
 
 // Count until idle timeout
-volatile uint32_t USBKeys_Idle_Expiry = 0;
-volatile uint8_t  USBKeys_Idle_Count = 0;
+volatile uint32_t USBKeys_Idle_Expiry;
+volatile uint8_t  USBKeys_Idle_Count;
 
 // USB Init Time (ms) - usb_init()
 volatile uint32_t USBInit_TimeStart;
 volatile uint32_t USBInit_TimeEnd;
 volatile uint16_t USBInit_Ticks;
+
+// USB Address - Set by host, unique to the bus
+volatile uint8_t USBDev_Address;
 
 // Latency measurement resource
 static uint8_t outputPeriodicLatencyResource;
@@ -147,20 +157,23 @@ static uint8_t outputPollLatencyResource;
 void Output_kbdProtocolBoot_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
 #if enableKeyboard_define == 1
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+		// Only use capability on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Output_kbdProtocolBoot()");
+		return;
+	default:
 		return;
 	}
 
 	// Only set if necessary
 	if ( USBKeys_Protocol == 0 )
-		return;
-
-	// TODO Analog inputs
-	// Only set on key press
-	if ( stateType != 0x01 )
 		return;
 
 	// Flush the key buffers
@@ -177,20 +190,23 @@ void Output_kbdProtocolBoot_capability( TriggerMacro *trigger, uint8_t state, ui
 void Output_kbdProtocolNKRO_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
 #if enableKeyboard_define == 1
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+		// Only use capability on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Output_kbdProtocolNKRO()");
+		return;
+	default:
 		return;
 	}
 
 	// Only set if necessary
 	if ( USBKeys_Protocol == 1 )
-		return;
-
-	// TODO Analog inputs
-	// Only set on key press
-	if ( stateType != 0x01 )
 		return;
 
 	// Flush the key buffers
@@ -207,23 +223,27 @@ void Output_kbdProtocolNKRO_capability( TriggerMacro *trigger, uint8_t state, ui
 void Output_toggleKbdProtocol_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
 #if enableKeyboard_define == 1
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Last:
+		// Only use capability on release
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Output_toggleKbdProtocol()");
+		return;
+	default:
 		return;
 	}
 
-	// Only toggle protocol if release state
-	if ( stateType == 0x00 && state == 0x03 )
-	{
-		// Flush the key buffers
-		USB_flushBuffers();
+	// Flush the key buffers
+	USB_flushBuffers();
 
-		// Toggle the keyboard protocol Mode
-		USBKeys_Protocol_New = !USBKeys_Protocol;
-		USBKeys_Protocol_Change = 1;
-	}
+	// Toggle the keyboard protocol Mode
+	USBKeys_Protocol_New = !USBKeys_Protocol;
+	USBKeys_Protocol_Change = 1;
 #endif
 }
 
@@ -232,22 +252,35 @@ void Output_toggleKbdProtocol_capability( TriggerMacro *trigger, uint8_t state, 
 void Output_consCtrlSend_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
 #if enableKeyboard_define == 1
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
-	{
-		print("Output_consCtrlSend(consCode)");
-		return;
-	}
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
 
-	// TODO Analog inputs
-	// Only indicate USB has changed if either a press or release has occured
-	if ( state == 0x01 || state == 0x03 )
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+		// Indicate changed
 		USBKeys_primary.changed |= USBKeyChangeState_Consumer;
-
-	// Only send keypresses if press or hold state
-	if ( stateType == 0x00 && state == 0x03 ) // Release state
-	{
+		break;
+	case CapabilityState_Any:
+		// Only set consumer code
+		break;
+	case CapabilityState_Last:
+		// Clear consumer code
+		USBKeys_primary.changed |= USBKeyChangeState_Consumer;
 		USBKeys_primary.cons_ctrl = 0;
+		return;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Output_consCtrlSend(consCode)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint16_t key = *(uint16_t*)(&args[0]);
+			print(" -> ");
+			printInt16( key );
+		}
+		return;
+	default:
 		return;
 	}
 
@@ -261,10 +294,15 @@ void Output_consCtrlSend_capability( TriggerMacro *trigger, uint8_t state, uint8
 // Used to prevent fall-through, this is the None keyword in KLL
 void Output_noneSend_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Output_noneSend()");
+		return;
+	default:
 		return;
 	}
 
@@ -276,22 +314,35 @@ void Output_noneSend_capability( TriggerMacro *trigger, uint8_t state, uint8_t s
 void Output_sysCtrlSend_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
 #if enableKeyboard_define == 1
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
-	{
-		print("Output_sysCtrlSend(sysCode)");
-		return;
-	}
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
 
-	// TODO Analog inputs
-	// Only indicate USB has changed if either a press or release has occured
-	if ( state == 0x01 || state == 0x03 )
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+		// Indicate changed
 		USBKeys_primary.changed |= USBKeyChangeState_System;
-
-	// Only send keypresses if press or hold state
-	if ( stateType == 0x00 && state == 0x03 ) // Release state
-	{
+		break;
+	case CapabilityState_Any:
+		// Only set consumer code
+		break;
+	case CapabilityState_Last:
+		// Clear system code
+		USBKeys_primary.changed |= USBKeyChangeState_System;
 		USBKeys_primary.sys_ctrl = 0;
+		return;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Output_sysCtrlSend(sysCode)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint8_t key = args[0];
+			print(" -> ");
+			printInt8( key );
+		}
+		return;
+	default:
 		return;
 	}
 
@@ -306,26 +357,57 @@ void Output_sysCtrlSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
 #if enableKeyboard_define == 1
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
-	{
-		print("Output_usbCodeSend(usbCode)");
-		return;
-	}
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
 
 	// Depending on which mode the keyboard is in the USB needs Press/Hold/Release events
 	uint8_t keyPress = 0; // Default to key release
 
-	// Only send press and release events
-	if ( stateType == 0x00 && state == 0x02 ) // Hold state
-		return;
-
-	// If press, send bit (NKRO) or byte (6KRO)
-	if ( stateType == 0x00 && state == 0x01 ) // Press state
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+		// Indicate changed
 		keyPress = 1;
+		break;
+	case CapabilityState_Last:
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Output_usbCodeSend(usbCode)");
+
+		// Read arg if not set to 0
+		if ( args != 0 )
+		{
+			uint8_t key = args[0];
+			print(" -> ");
+			printInt8( key );
+		}
+		return;
+	default:
+		return;
+	}
 
 	// Get the keycode from arguments
 	uint8_t key = args[0];
+
+	// Extra USB Debug
+	if ( Output_DebugMode > 1 )
+	{
+		print("\033[1;34mUSB\033[0m ");
+		printInt8( key );
+		print(" ");
+		switch ( cstate )
+		{
+		case CapabilityState_Initial:
+			print("\033[1;33mP\033[0m");
+			break;
+		case CapabilityState_Last:
+			print("\033[1;35mR\033[0m");
+			break;
+		default:
+			break;
+		}
+		print( NL );
+	}
 
 	// Depending on which mode the keyboard is in, USBKeys_Keys array is used differently
 	// Boot mode - Maximum of 6 byte codes
@@ -495,9 +577,6 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 		else if ( key == 0x00 )
 		{
 			USBKeys_primary.changed |= USBKeyChangeState_MainKeys;
-
-			// Also flush out buffers just in case
-			USB_flushBuffers();
 			break;
 		}
 		// Invalid key
@@ -535,12 +614,7 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 // Argument #3: USB Y Axis (16 bit) relative
 void Output_usbMouse_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
-	{
-		print("Output_usbMouse(mouseButton,relX,relY)");
-		return;
-	}
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
 
 	// Determine which mouse button was sent
 	// The USB spec defines up to a max of 0xFFFF buttons
@@ -551,37 +625,95 @@ void Output_usbMouse_capability( TriggerMacro *trigger, uint8_t state, uint8_t s
 	uint16_t mouse_button = *(uint16_t*)(&args[0]);
 
 	// X/Y Relative Axis
-	uint16_t mouse_x = *(uint16_t*)(&args[2]);
-	uint16_t mouse_y = *(uint16_t*)(&args[4]);
+	int16_t mouse_x = *(int16_t*)(&args[2]);
+	int16_t mouse_y = *(int16_t*)(&args[4]);
 
 	// Adjust for bit shift
 	uint16_t mouse_button_shift = mouse_button - 1;
 
-	// Only send mouse button if in press or hold state
-	if ( stateType == 0x00 && state == 0x03 ) // Release state
+	switch ( cstate )
 	{
-		// Release
+	case CapabilityState_Initial:
+	case CapabilityState_Any:
+		// Press/Hold
 		if ( mouse_button )
-			USBMouse_Buttons &= ~(1 << mouse_button_shift);
-	}
-	else
-	{
-		// Press or hold
-		if ( mouse_button )
+		{
 			USBMouse_Buttons |= (1 << mouse_button_shift);
+		}
 
 		if ( mouse_x )
+		{
 			USBMouse_Relative_x = mouse_x;
+		}
 		if ( mouse_y )
+		{
 			USBMouse_Relative_y = mouse_y;
+		}
+		break;
+	case CapabilityState_Last:
+		// Release
+		if ( mouse_button )
+		{
+			USBMouse_Buttons &= ~(1 << mouse_button_shift);
+		}
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Output_usbMouse(mouseButton,relX,relY)");
+		return;
+	default:
+		return;
 	}
 
 	// Trigger updates
 	if ( mouse_button )
+	{
 		USBMouse_Changed |= USBMouseChangeState_Buttons;
+	}
 
 	if ( mouse_x || mouse_y )
+	{
 		USBMouse_Changed |= USBMouseChangeState_Relative;
+	}
+}
+
+// Sends a mouse wheel command over USB Output buffer
+// XXX This function *will* be changing in the future
+//     If you use it, be prepared that your .kll files will break in the future (post KLL 0.5)
+// Argument #1: USB Vertical Wheel (8 bit)
+// Argument #2: USB Horizontal Wheel (8 bit)
+void Output_usbMouseWheel_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+{
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	// Vertical and horizontal mouse wheels
+	int8_t wheel_vert = *(int8_t*)(&args[0]);
+	int8_t wheel_hori = *(int8_t*)(&args[2]);
+
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+	case CapabilityState_Any:
+		// Press/Hold
+		if ( wheel_vert )
+		{
+			USBMouse_VertWheel = wheel_vert;
+			USBMouse_Changed |= USBMouseChangeState_WheelVert;
+		}
+
+		if ( wheel_hori )
+		{
+			USBMouse_HoriWheel = wheel_hori;
+			USBMouse_Changed |= USBMouseChangeState_WheelHori;
+		}
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Output_usbMouseWheel(vert,hori)");
+		return;
+	default:
+		return;
+	}
 }
 #endif
 
@@ -596,11 +728,12 @@ void USB_flushBuffers()
 	memset( (void*)&USBKeys_primary, 0, sizeof( USBKeys ) );
 	memset( (void*)&USBKeys_idle, 0, sizeof( USBKeys ) );
 
+	// Clear idle timeout state
+	USBKeys_Idle_Expiry = 0;
+	USBKeys_Idle_Count = 0;
+
 	// Reset USBKeys_Keys size
 	USBKeys_Sent = 0;
-
-	// Set USBKeys_LEDs_Changed to indicate that we should update LED status
-	USBKeys_LEDs_Changed = 1;
 }
 
 
@@ -618,6 +751,21 @@ inline void USB_setup()
 
 	// USB Protocol Transition variable
 	USBKeys_Protocol_Change = 0;
+
+	// Clear USB LEDs (may be set by the OS rather quickly)
+	USBKeys_LEDs_prev = 0;
+	USBKeys_LEDs = 0;
+
+	// Clear mouse state
+	USBMouse_Buttons = 0;
+	USBMouse_Relative_x = 0;
+	USBMouse_Relative_y = 0;
+	USBMouse_VertWheel = 0;
+	USBMouse_HoriWheel = 0;
+	USBMouse_Changed = 0;
+
+	// Clear USB address
+	USBDev_Address = 0;
 
 	// Flush key buffers
 	USB_flushBuffers();
@@ -661,6 +809,57 @@ inline void USB_poll()
 
 	// End latency measurement
 	Latency_end_time( outputPollLatencyResource );
+}
+
+
+// Gather USB HID LED states
+// Keeps track of previous state, and sends new state to PartialMap
+void USB_indicator_update()
+{
+	// Check each bit of the indicator byte
+	for ( uint8_t bit = 0; bit < LED_KANA; bit++ )
+	{
+		uint8_t id = bit + 1; // Conversion to USB HID Indicator code
+
+		uint8_t cur = USBKeys_LEDs & (1 << bit);
+		uint8_t prev = USBKeys_LEDs_prev & (1 << bit);
+
+		// Detect if off
+		if ( cur == 0 && cur == prev )
+		{
+			continue;
+		}
+		// Detect if on
+		else if ( cur == prev )
+		{
+			// On
+			Macro_ledState( id, ScheduleType_On );
+		}
+		// Detect if press
+		else if ( cur )
+		{
+			// Activate
+			Macro_ledState( id, ScheduleType_A );
+		}
+		// Detect if release
+		else if ( prev )
+		{
+			// Deactivate
+			Macro_ledState( id, ScheduleType_D );
+		}
+	}
+
+	// Update for next state comparison
+	USBKeys_LEDs_prev = USBKeys_LEDs;
+}
+
+
+// Gather USB Suspend/Sleep status
+// Send events accordingly to PartialMap depending on status
+void USB_suspend_status_update()
+{
+	// TODO
+	// usb_suspended() <- 1 if suspended
 }
 
 
@@ -713,10 +912,72 @@ inline void USB_periodic()
 		Scan_finishedWithOutput( USBKeys_Sent );
 		break;
 	}
+
+	// Update HID LED states
+	USB_indicator_update();
+
+	// Monitor USB Suspend/Sleep State
+	USB_suspend_status_update();
 #endif
 
 	// End latency measurement
 	Latency_end_time( outputPeriodicLatencyResource );
+}
+
+
+// Packet buffer debug for System Control codes
+void USB_SysCtrlDebug( USBKeys *buffer )
+{
+	print("\033[1;34mSysCtrl\033[0m[");
+	printHex_op( buffer->sys_ctrl, 2 );
+	print( "] " NL );
+}
+
+
+// Packet buffer debug for Consumer Control codes
+void USB_ConsCtrlDebug( USBKeys *buffer )
+{
+	print("\033[1;34mConsCtrl\033[0m[");
+	printHex_op( buffer->cons_ctrl, 2 );
+	print( "] " NL );
+}
+
+
+// Packet buffer debug for 6kro/boot mode USB Keyboard codes
+void USB_6KRODebug( USBKeys *buffer )
+{
+	print("\033[1;34m6KRO\033[0m ");
+	printHex_op( buffer->modifiers, 2 );
+	print(" ");
+	printHex( 0 );
+	print(" ");
+	printHex_op( buffer->keys[0], 2 );
+	printHex_op( buffer->keys[1], 2 );
+	printHex_op( buffer->keys[2], 2 );
+	printHex_op( buffer->keys[3], 2 );
+	printHex_op( buffer->keys[4], 2 );
+	printHex_op( buffer->keys[5], 2 );
+	print( NL );
+}
+
+
+// Packet buffer debug for nkro USB Keyboard codes
+void USB_NKRODebug( USBKeys *buffer )
+{
+	print("\033[1;34mNKRO\033[0m ");
+	printHex_op( buffer->modifiers, 2 );
+	print(" ");
+	for ( uint8_t c = 0; c < 6; c++ )
+		printHex_op( buffer->keys[ c ], 2 );
+	print(" ");
+	for ( uint8_t c = 6; c < 20; c++ )
+		printHex_op( buffer->keys[ c ], 2 );
+	print(" ");
+	printHex_op( buffer->keys[20], 2 );
+	print(" ");
+	for ( uint8_t c = 21; c < 27; c++ )
+		printHex_op( buffer->keys[ c ], 2 );
+	print( NL );
 }
 
 
@@ -774,7 +1035,7 @@ inline int USB_putstr( char* str )
 #if enableVirtualSerialPort_define == 1
 #if defined(_avr_at_) // AVR
 	uint16_t count = 0;
-#elif defined(_kinetis_) // ARM
+#else
 	uint32_t count = 0;
 #endif
 	// Count characters until NULL character, then send the amount counted
@@ -889,6 +1150,14 @@ void cliFunc_readLEDs( char* args )
 	print( NL );
 	info_msg("LED State: ");
 	printInt8( USBKeys_LEDs );
+}
+
+
+void cliFunc_usbAddr( char* args )
+{
+	print(NL);
+	info_msg("USB Address: ");
+	printInt8( USBDev_Address );
 }
 
 
