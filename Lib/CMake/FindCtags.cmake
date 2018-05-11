@@ -9,7 +9,7 @@
 #   endif()
 
 find_program( CTAGS_EXECUTABLE
-	NAMES ctags
+	NAMES exctags ctags-exuberant ctags
 	DOC "ctags executable"
 )
 mark_as_advanced( CTAGS_EXECUTABLE )
@@ -23,6 +23,9 @@ if( CTAGS_EXECUTABLE )
 
 	if( ctags_version MATCHES "^Exuberant Ctags [0-9]" )
 		string( REPLACE "Exuberant Ctags " "" CTAGS_VERSION_STRING "${ctags_version}" )
+		string( REGEX REPLACE ",.*$" "" CTAGS_VERSION_STRING ${CTAGS_VERSION_STRING} )
+	elseif( ctags_version MATCHES "^Universal Ctags [0-9]" )
+		string( REPLACE "Universal Ctags " "" CTAGS_VERSION_STRING "${ctags_version}" )
 		string( REGEX REPLACE ",.*$" "" CTAGS_VERSION_STRING ${CTAGS_VERSION_STRING} )
 	else ()
 		# The xcode version of ctags is broken and useless

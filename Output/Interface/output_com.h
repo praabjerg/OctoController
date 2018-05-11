@@ -1,4 +1,4 @@
-/* Copyright (C) 2013-2017 by Jacob Alexander
+/* Copyright (C) 2013-2018 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,8 +33,16 @@
 #include <output_uart.h>
 #endif
 
+#if defined(Output_RTTEnabled_define)
+#include <output_rtt.h>
+#endif
+
 #if defined(Output_USBEnabled_define)
 #include <output_usb.h>
+#endif
+
+#if defined(Output_TestOutEnabled_define)
+#include <output_testout.h>
 #endif
 
 
@@ -49,7 +57,7 @@
 
 extern volatile uint8_t  Output_Available; // 0 - Output module not fully functional, 1 - Output module working
 
-extern          uint8_t  Output_DebugMode; // 0 - Debug disabled, 1 - Debug enabled
+extern          uint8_t  Output_DebugMode; // 0 - Debug disabled, 1 - Debug enabled, 2 - Extra debug
 
 extern          uint16_t Output_ExtCurrent_Available; // mA - Set by outside module if not using USB (i.e. Interconnect)
 

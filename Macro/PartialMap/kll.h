@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2017 by Jacob Alexander
+/* Copyright (C) 2014-2018 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <kll_defs.h>
 
 // Project Includes
+#include <Lib/mcu_compat.h>
 #include <Lib/time.h>
 #include <print.h>
 #include <scan_loop.h>
@@ -69,7 +70,7 @@ typedef uint8_t index_uint_t;
 // e.g. mk20s  -> 32 bit
 //      atmega -> 16 bit
 // Default to whatever is detected
-#if defined(_kinetis_)
+#if defined(_kinetis_) || defined(_sam_)
 typedef uint32_t nat_ptr_t;
 #elif defined(_avr_at_)
 typedef uint16_t nat_ptr_t;
@@ -105,7 +106,8 @@ typedef uint8_t state_uint_t;
 //   * Press/Hold/Release/Off - PHRO
 //   * Start/On/Stop/Off      - AODO
 //   * Done/Repeat/Off        - DRO
-//   * Threshold (Range)      - 0x01 (Released), 0x10 (Light press), 0xFF (Max press) (Threashold)
+//   * Threshold (Range)      - 0x01 (Released), 0x02 (Pressed), 0x10 (Light press), 0xFF (Max press) (Threashold)
+//   * Layer Info             - 0x10 (Shift), 0x20 (Latch), 0x40 (Lock) -> May be activated simultaneously with AODO
 //   * Debug                  - 0xFF (Print capability name)
 //
 // States with the same numerical value have same/similar function, but is called something else in that case.
@@ -126,8 +128,29 @@ typedef enum ScheduleState {
 	ScheduleType_Done   = 0x06, // Done
 	ScheduleType_Repeat = 0x07, // Repeat
 
+	ScheduleType_Shift  = 0x10, // Shift
+	ScheduleType_Latch  = 0x20, // Latch
+	ScheduleType_Lock   = 0x40, // Lock
+
 	ScheduleType_Debug  = 0xFF, // Print capability name
 } ScheduleState;
+
+// -- Capability State
+// CapabilityStates are used by capabilities to determine how to handle an incoming event.
+// In most case there are only a few variations of capability activation that are useful.
+// For example:
+//  - First event (e.g. press)
+//  - Last event (e.g. release)
+//  - Any activation
+// It is still useful for capabilities to have full access to the trigger ScheduleState (e.g. analog).
+// But this makes it much simpler to work with capabilities in a generic way.
+typedef enum CapabilityState {
+	CapabilityState_None    = 0x00, // Invalid, ignore this event.
+	CapabilityState_Initial = 0x01, // Initial state
+	CapabilityState_Last    = 0x02, // Last state
+	CapabilityState_Any     = 0x03, // Any activation (Initial+Last)
+	CapabilityState_Debug   = 0xFF, // Debug trigger
+} CapabilityState;
 
 // Schedule parameter container
 // time   - Time constraints for parameter
@@ -170,6 +193,7 @@ typedef struct ScheduleLookup {
 // ResultMacro.guide -> [<combo length>|<capability index>|<arg1>|<argn>|<capability index>|...|<combo length>|...|0]
 //
 // ResultMacroRecord.pos       -> <current combo position>
+// ResultMacroRecord.prevPos   -> <previous combo position>
 // ResultMacroRecord.state     -> <last key state>
 // ResultMacroRecord.stateType -> <last key state type>
 
@@ -180,6 +204,7 @@ typedef struct ResultMacro {
 
 typedef struct ResultMacroRecord {
 	var_uint_t pos;
+	var_uint_t prevPos;
 	uint8_t  state;
 	uint8_t  stateType;
 } ResultMacroRecord;
@@ -214,7 +239,11 @@ typedef struct ResultGuide {
 //   * 0x0E Animation Bank 2 ( 256- 511) [DRO]
 //   * 0x0F Animation Bank 3 ( 512- 767) [DRO]
 //   * 0x10 Animation Bank 4 ( 768-1023) [DRO]
-//   * 0x11-0xFE Reserved
+//   * 0x11 Sleep Bank 1     (   0- 255) [AODO]
+//   * 0x12 Resume Bank 1    (   0- 255) [AODO]
+//   * 0x13 Inactive Bank 1  (   0- 255) [AODO]
+//   * 0x14 Active Bank 1    (   0- 255) [AODO]
+//   * 0x15-0xFE Reserved
 //   * 0xFF Debug State
 //
 // States:
@@ -225,8 +254,9 @@ typedef struct ResultGuide {
 // TriggerMacro.guide  -> [<combo length>|<key1 type>|<key1 state>|<key1>...<keyn type>|<keyn state>|<keyn>|<combo length>...|0]
 // TriggerMacro.result -> <index to result macro>
 //
-// TriggerMacroRecord.pos   -> <current combo position>
-// TriggerMacroRecord.state -> <status of the macro pos>
+// TriggerMacroRecord.pos    -> <current combo position>
+// TriggerMacroRecord.prePos -> <previous combo position>
+// TriggerMacroRecord.state  -> <status of the macro pos>
 
 // TriggerType
 typedef enum TriggerType {
@@ -247,17 +277,25 @@ typedef enum TriggerType {
 	TriggerType_Animation2 = 0x0E,
 	TriggerType_Animation3 = 0x0F,
 	TriggerType_Animation4 = 0x10,
+	TriggerType_Sleep1     = 0x11,
+	TriggerType_Resume1    = 0x12,
+	TriggerType_Inactive1  = 0x13,
+	TriggerType_Active1    = 0x14,
 
-	/* Reserved 0x11-0xFE */
+	/* Reserved 0x15-0xFE */
 
 	TriggerType_Debug   = 0xFF,
 } TriggerType;
 
+extern CapabilityState KLL_CapabilityState( ScheduleState state, TriggerType type );
+
 // TriggerMacro states
 typedef enum TriggerMacroState {
-	TriggerMacro_Press,   // Combo in sequence is passing
-	TriggerMacro_Release, // Move to next combo in sequence (or finish if at end of sequence)
-	TriggerMacro_Waiting, // Awaiting user input
+	TriggerMacro_Waiting      = 0x0, // Awaiting user input
+	TriggerMacro_Press        = 0x1, // Combo in sequence is passing
+	TriggerMacro_Release      = 0x2, // Move to next combo in sequence (or finish if at end of sequence)
+	TriggerMacro_PressRelease = 0x3, // Both Press and Release votes in the same process loop
+	                                 // Used during sequence macros
 } TriggerMacroState;
 
 // TriggerMacro struct, one is created per TriggerMacro, no duplicates
@@ -268,6 +306,7 @@ typedef struct TriggerMacro {
 
 typedef struct TriggerMacroRecord {
 	var_uint_t pos;
+	var_uint_t prevPos;
 	TriggerMacroState state;
 } TriggerMacroRecord;
 
@@ -287,19 +326,22 @@ typedef struct TriggerEvent {
 	uint8_t       index;
 } TriggerEvent;
 
+extern var_uint_t KLL_TriggerIndex_loopkup( TriggerType type, uint8_t index );
+
 
 
 // -- List Structs
 
 // Result pending list struct
 typedef struct ResultPendingElem {
-	TriggerMacro *trigger;
-	index_uint_t  index;
+	TriggerMacro     *trigger;
+	index_uint_t      index;
+	ResultMacroRecord record;
 } ResultPendingElem;
 
 // Results Pending - Ring-buffer definition
 typedef struct ResultsPending {
-	ResultPendingElem data[ ResultMacroNum_KLL ];
+	ResultPendingElem data[ ResultMacroBufferSize_define ];
 	index_uint_t      size;
 } ResultsPending;
 

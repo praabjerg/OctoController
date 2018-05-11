@@ -7,11 +7,22 @@ KLL = 0.5;
 # Modified Date
 Date = 2017-02-05;
 
-# Capabilities
+## Capabilities ##
 animation => Pixel_Animation_capability( index : 2, loops : 1, pfunc : 1, divmask : 1, divshift : 1, replace : 1 );
 animationIndex => Pixel_AnimationIndex_capability( settingindex : 2 );
 pixel => Pixel_Pixel_capability();
+
+# Animation Control
+# 0 - Pause/Resume
+# 1 - ForwardOne
+# 2 - Forward
+# 3 - Stop (clears all animations)
+# 4 - Reset (restarts animations)
+# 5 - Wipe Pause (pauses animations and clears display)
+# 6 - Pause
+# 7 - Clear (clears the display, animations continue)
 animation_control => Pixel_AnimationControl_capability( func : 1 );
+
 
 # Enable define
 Pixel_MapEnabled = "1";
@@ -47,4 +58,8 @@ Pixel_HardCode_ChanWidth => Pixel_HardCode_ChanWidth_define;
 Pixel_HardCode_Channels => Pixel_HardCode_Channels_define;
 Pixel_HardCode_ChanWidth = 0;
 Pixel_HardCode_Channels = 0;
+
+# Animation Stack Size
+Pixel_AnimationStackSize => Pixel_AnimationStackSize_define;
+Pixel_AnimationStackSize = 20;
 

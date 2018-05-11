@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2017 by Jacob Alexander
+/* Copyright (C) 2014-2018 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,6 +18,9 @@
 
 // ----- Includes -----
 
+// Project Includes
+#include <Lib/time.h>
+
 // Compiler Includes
 #include <stdint.h>
 
@@ -28,7 +31,11 @@
 void Macro_analogState( uint16_t scanCode, uint8_t state );
 void Macro_animationState( uint16_t animationIndex, uint8_t state );
 void Macro_keyState( uint16_t scanCode, uint8_t state );
+void Macro_layerState( uint16_t layerIndex, uint8_t state );
 void Macro_ledState( uint16_t ledCode, uint8_t state );
+void Macro_timeState( uint8_t type, uint16_t cur_time, uint8_t state );
+
+uint8_t Macro_tick_update( TickStore *store, uint8_t type );
 
 void Macro_periodic();
 void Macro_poll();

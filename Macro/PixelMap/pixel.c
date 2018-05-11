@@ -1,4 +1,4 @@
-/* Copyright (C) 2015-2017 by Jacob Alexander
+/* Copyright (C) 2015-2018 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -126,7 +126,7 @@ static uint8_t pixelLatencyResource;
 // ----- Function Declarations -----
 
 uint8_t Pixel_animationProcess( AnimationStackElement *elem );
-uint8_t Pixel_addAnimation( AnimationStackElement *element );
+uint8_t Pixel_addAnimation( AnimationStackElement *element, CapabilityState cstate );
 uint8_t Pixel_determineLastTriggerScanCode( TriggerMacro *trigger );
 
 void Pixel_pixelSet( PixelElement *elem, uint32_t value );
@@ -141,17 +141,22 @@ AnimationStackElement *Pixel_lookupAnimation( uint16_t index, uint16_t prev );
 
 void Pixel_AnimationIndex_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+	case CapabilityState_Last:
+		// Mainly used on press
+		// Except some configurations may also use release
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Pixel_AnimationIndex_capability(settingindex)");
 		return;
-	}
-
-	// Only use capability on press
-	// TODO Analog
-	if ( state != 0x01 )
+	default:
 		return;
+	}
 
 	// Lookup animation settings
 	uint16_t index = *(uint16_t*)(&args[0]);
@@ -168,22 +173,25 @@ void Pixel_AnimationIndex_capability( TriggerMacro *trigger, uint8_t state, uint
 	AnimationStackElement element = Pixel_AnimationSettings[ index ];
 	element.trigger = trigger;
 
-	Pixel_addAnimation( &element );
+	Pixel_addAnimation( &element, cstate );
 }
 
 void Pixel_Animation_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+		// Only use capability on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Pixel_Animation_capability(index,loops,pfunc,framedelay,frameoption,replace)");
 		return;
-	}
-
-	// Only use capability on press
-	// TODO Analog
-	if ( state != 0x01 )
+	default:
 		return;
+	}
 
 	AnimationStackElement element;
 	element.trigger = trigger;
@@ -196,22 +204,25 @@ void Pixel_Animation_capability( TriggerMacro *trigger, uint8_t state, uint8_t s
 	element.frameoption = *(uint8_t*)(&args[5]);
 	element.replace = *(uint8_t*)(&args[6]);
 
-	Pixel_addAnimation( &element );
+	Pixel_addAnimation( &element, cstate );
 }
 
 void Pixel_Pixel_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+		// Only use capability on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Pixel_Pixel_capability(pixel,chan,value)");
 		return;
-	}
-
-	// Only use capability on press
-	// TODO Analog
-	if ( state != 0x01 )
+	default:
 		return;
+	}
 
 	/*
 	PixelChange change = *(PixelChange*)(&args[0]);
@@ -224,17 +235,20 @@ void Pixel_Pixel_capability( TriggerMacro *trigger, uint8_t state, uint8_t state
 
 void Pixel_AnimationControl_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
 {
-	// Display capability name
-	if ( stateType == 0xFF && state == 0xFF )
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
 	{
+	case CapabilityState_Initial:
+		// Only use capability on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
 		print("Pixel_AnimationControl_capability(func)");
 		return;
-	}
-
-	// Only use capability on press
-	// TODO Analog
-	if ( state != 0x01 )
+	default:
 		return;
+	}
 
 	uint8_t arg  = *(uint8_t*)(&args[0]);
 
@@ -272,6 +286,9 @@ void Pixel_AnimationControl_capability( TriggerMacro *trigger, uint8_t state, ui
 		break;
 	case 6: // Pauses animation
 		Pixel_animationControl = AnimationControl_Pause;
+		break;
+	case 7: // Clears pixels (no pause and no stop)
+		Pixel_animationControl = AnimationControl_Clear;
 		break;
 	}
 }
@@ -337,17 +354,20 @@ uint8_t Pixel_addDefaultAnimation( uint32_t index )
 		return 0;
 	}
 
-	return Pixel_addAnimation( (AnimationStackElement*)&Pixel_AnimationSettings[ index ] );
+	return Pixel_addAnimation( (AnimationStackElement*)&Pixel_AnimationSettings[ index ], CapabilityState_None );
 }
 
 // Allocates animaton memory slot
 // Initiates animation to process on the next cycle
 // Returns 1 on success, 0 on failure to allocate
-uint8_t Pixel_addAnimation( AnimationStackElement *element )
+uint8_t Pixel_addAnimation( AnimationStackElement *element, CapabilityState cstate )
 {
-	if ( element->replace )
+	AnimationStackElement *found;
+	switch ( element->replace )
 	{
-		AnimationStackElement *found = Pixel_lookupAnimation( element->index, 0 );
+	case AnimationReplaceType_Basic:
+	case AnimationReplaceType_All:
+		found = Pixel_lookupAnimation( element->index, 0 );
 
 		// If found, modify stack element
 		if ( found != NULL && ( found->trigger == element->trigger || element->replace == AnimationReplaceType_All ) )
@@ -363,6 +383,48 @@ uint8_t Pixel_addAnimation( AnimationStackElement *element )
 			found->state = element->state;
 			return 0;
 		}
+
+	// Replace on press and release
+	// Press starts the animation
+	// Release stops the animation
+	case AnimationReplaceType_State:
+		found = Pixel_lookupAnimation( element->index, 0 );
+
+		switch ( cstate )
+		{
+		// Press
+		case CapabilityState_Initial:
+			// If found, modify stack element
+			if ( found )
+			{
+				found->pos = element->pos;
+				found->subpos = element->subpos;
+				found->loops = element->loops;
+				found->pfunc = element->pfunc;
+				found->ffunc = element->ffunc;
+				found->framedelay = element->framedelay;
+				found->frameoption = element->frameoption;
+				found->replace = element->replace;
+				found->state = element->state;
+				return 0;
+			}
+			break;
+
+		// Release
+		case CapabilityState_Last:
+			// Only need to do something if the animation was found (which is stop)
+			if ( found )
+			{
+				found->state = AnimationPlayState_Stop;
+			}
+			return 0;
+
+		default:
+			break;
+		}
+
+	default:
+		break;
 	}
 
 	// Make sure there is room left on the stack
@@ -501,11 +563,19 @@ void Pixel_stackProcess()
 			continue;
 		}
 
+		// Store index, in case we need to send an event
+		uint16_t cur_index = elem->index;
+
 		// Process animation element
 		if ( Pixel_animationProcess( elem ) )
 		{
 			// Re-add animation to stack
 			Pixel_AnimationStack.stack[Pixel_AnimationStack.size++] = elem;
+		}
+		else
+		{
+			// Signal that animation finished
+			Macro_animationState( cur_index, ScheduleType_Done );
 		}
 	}
 }
@@ -1357,6 +1427,10 @@ uint8_t Pixel_animationProcess( AnimationStackElement *elem )
 		if ( elem->loops == 0 || elem->loops-- > 1 )
 		{
 			elem->pos = 0;
+
+			// Signal that animation is repeating
+			Macro_animationState( elem->index, ScheduleType_Repeat );
+
 			return Pixel_animationProcess( elem );
 		}
 		// Stop animation
@@ -1533,64 +1607,6 @@ uint8_t Pixel_determineLastTriggerScanCode( TriggerMacro *trigger )
 	}
 }
 
-// Updates animations for USB Lock LEDs
-// TODO - Should be generated by KLL
-void Pixel_updateUSBLEDs()
-{
-#if !defined(_host_)
-	if ( !USBKeys_LEDs_Changed )
-		return;
-
-	/*
-	AnimationStackElement element;
-	element.trigger = 0;
-	element.pos = 0;
-	element.subpos = 0;
-	element.loops = 0;
-	element.pfunc = 0;
-	element.ffunc = 0;
-	element.framedelay = 1;
-	element.frameoption = 0;
-	element.replace = AnimationReplaceType_Basic;
-
-	// NumLock
-	if ( USBKeys_LEDs & 0x01 )
-	{
-		print("NumLock On");
-		// TODO
-	}
-
-	// CapsLock
-	// TODO Set index properly for animation
-	const uint16_t caps_index = 9;
-	if ( USBKeys_LEDs & 0x02 )
-	{
-		element.index = caps_index;
-		Pixel_addAnimation( &element );
-	}
-	else
-	{
-		Pixel_delAnimation( caps_index, 1 );
-	}
-
-	// ScrollLock
-	// TODO Set index properly for animation
-	const uint16_t scroll_index = 12;
-	if ( USBKeys_LEDs & 0x04 )
-	{
-		element.index = scroll_index;
-		Pixel_addAnimation( &element );
-	}
-	else
-	{
-		Pixel_delAnimation( scroll_index, 1 );
-	}
-	*/
-
-	USBKeys_LEDs_Changed = 0;
-#endif
-}
-
 // External Animation Control
 void Pixel_setAnimationControl( AnimationControl control )
 {
@@ -1627,9 +1643,6 @@ inline void Pixel_process()
 	// Start latency measurement
 	Latency_start_time( pixelLatencyResource );
 
-	// Update USB LED Status
-	Pixel_updateUSBLEDs();
-
 	// Only update frame when ready
 	switch( Pixel_FrameState )
 	{
@@ -1661,7 +1674,11 @@ inline void Pixel_process()
 		Pixel_initializeStartAnimations();
 		break;
 	case AnimationControl_WipePause:  // Pauses animations, clears the display
-		Pixel_FrameState = FrameState_Pause;
+		Pixel_animationControl = AnimationControl_Pause; // Update one more time
+		Pixel_clearPixels();
+		goto pixel_process_done;
+	case AnimationControl_Clear: // Clears the display, animations continue
+		Pixel_FrameState = FrameState_Update;
 		Pixel_clearPixels();
 		break;
 	default: // Pause
