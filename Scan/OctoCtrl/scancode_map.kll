@@ -1,13 +1,39 @@
-# Infinity 60%
+# OctoCtrl
 
-Name = "Infinity 60%";
-Version = 0.5;
-Author = "HaaTa (Jacob Alexander) 2014-2017";
+Name = "OctoCtrl";
+Version = 0.1;
+Author = "Palle Raabjerg 2018";
 KLL = 0.5;
 
 # Modified Date
-Date = 2017-11-17;
+Date = 2018-05-25;
 
+# Row 1 (1-7)
+S2 : U["RGui"] + U[","];
+S3 : U["RGui"] + U["N"];
+S4 : U["RGui"] + U["P"];
+S6 : U["RGui"] + U["F5"];
+S7 : U["RGui"] + U["F1"];
 
-# N/A - Nothing needed in this file (for now)
+# Row 2 (8-14)
+S8 : U["LCtrl"] + U["Backtick"];
+S9 : U["RGui"] + U["."];
+S10 : U["RGui"] + U["I"];
+S11 : U["RGui"] + U["Y"];
+S12 : U["RGui"] + U["1"];
+S13 : U["RGui"] + U["F6"];
+S14 : U["RGui"] + U["F2"];
 
+# Row 3 (15-21)
+S15 : U["RGui"] + U["LShift"] + U["Backtick"];
+S16 : U["RGui"] + U["J"];
+S19 : U["RGui"] + U["5"];
+S20 : U["RGui"] + U["F7"];
+S21 : U["RGui"] + U["F3"];
+
+# Row 4 (22-28)
+S23 : U["RGui"] + U["LShift"] + U["J"];
+S24 : U["RGui"] + U["S"];
+S25 : U["RGui"] + U["C"];
+S27 : U["RGui"] + U["Backtick"];
+S28 : U["RGui"] + U["F4"];
