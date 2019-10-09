@@ -1,5 +1,5 @@
 /* Copyright (c) 2011,2012 Simon Schubert <2@0x2c.org>.
- * Modifications by Jacob Alexander 2014-2017 <haata@kiibohd.com>
+ * Modifications by Jacob Alexander 2014-2019 <haata@kiibohd.com>
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +22,17 @@
 
 // Local Includes
 #include "weak.h"
-#include "mchck.h"
+#include "device.h"
+#include "debug.h"
+#include "dfu.h"
+
 #include "dfu.desc.h"
 
-#include "debug.h"
-
+#if defined(_sam_)
+#include <common/services/clock/osc.h>
+#define WDT_TICK_US (128 * 1000000 / BOARD_FREQ_SLCK_XTAL)
+#define WDT_MAX_VALUE 4095
+#endif
 
 
 // ----- Variables -----
@@ -37,8 +43,7 @@
 static char staging[ USB_DFU_TRANSFER_SIZE ];
 
 // DFU State
-static struct dfu_ctx dfu_ctx;
-
+struct dfu_ctx dfu_ctx;
 
 
 // ----- Functions -----
@@ -48,13 +53,16 @@ int sector_print( void* buf, size_t sector, size_t chunks )
 	uint8_t* start = (uint8_t*)buf + sector * USB_DFU_TRANSFER_SIZE;
 	uint8_t* end = (uint8_t*)buf + (sector + 1) * USB_DFU_TRANSFER_SIZE;
 	uint8_t* pos = start;
+	int retval = 0;
 
+#if defined(_kinetis_)
 	// Verify if sector erased
 	FTFL.fccob.read_1s_section.fcmd = FTFL_FCMD_READ_1s_SECTION;
 	FTFL.fccob.read_1s_section.addr = (uintptr_t)start;
 	FTFL.fccob.read_1s_section.margin = FTFL_MARGIN_NORMAL;
 	FTFL.fccob.read_1s_section.num_words = 250; // 2000 kB / 64 bits
-	int retval = ftfl_submit_cmd();
+	retval = ftfl_submit_cmd();
+#endif
 
 #ifdef FLASH_DEBUG
 	print( NL );
@@ -146,8 +154,6 @@ static enum dfu_status setup_write( size_t off, size_t len, void **buf )
 
 static enum dfu_status finish_write( void *buf, size_t off, size_t len )
 {
-	void *target;
-
 	// If nothing left to flash, this is still ok
 	if ( len == 0 )
 	{
@@ -189,7 +195,8 @@ static enum dfu_status finish_write( void *buf, size_t off, size_t len )
 		return DFU_STATUS_errADDRESS;
 	}
 
-	target = flash_get_staging_area( off + (uintptr_t)&_app_rom, USB_DFU_TRANSFER_SIZE );
+#if defined(_kinetis_)
+	void *target = flash_get_staging_area( off + (uintptr_t)&_app_rom, USB_DFU_TRANSFER_SIZE );
 	if ( !target )
 	{
 		return DFU_STATUS_errADDRESS;
@@ -199,27 +206,39 @@ static enum dfu_status finish_write( void *buf, size_t off, size_t len )
 	// Depending on the error return a different status
 	switch ( flash_program_sector( off + (uintptr_t)&_app_rom, USB_DFU_TRANSFER_SIZE ) )
 	{
-	/*
 	case FTFL_FSTAT_RDCOLERR: // Flash Read Collision Error
 	case FTFL_FSTAT_ACCERR:   // Flash Access Error
 	case FTFL_FSTAT_FPVIOL:   // Flash Protection Violation Error
 		return DFU_STATUS_errADDRESS;
 	case FTFL_FSTAT_MGSTAT0:  // Memory Controller Command Completion Error
 		return DFU_STATUS_errADDRESS;
-	*/
 
 	case 0:
 	default: // No error
 		return DFU_STATUS_OK;
 	}
+#elif defined(_sam_)
+	switch ( flash_program_sector( off + (uintptr_t)&_app_rom, staging, USB_DFU_TRANSFER_SIZE ) )
+	{
+	case FLASH_RC_OK:  // No error
+		return DFU_STATUS_OK;
+	case FLASH_RC_ERROR:
+	case FLASH_RC_INVALID:
+	case FLASH_RC_NOT_SUPPORT:
+	default:
+		return DFU_STATUS_errADDRESS;
+	}
+#endif
 }
 
 void init_usb_bootloader( int config )
 {
 	dfu_init( setup_read, setup_write, finish_write, &dfu_ctx );
 
+#if defined(_kinetis_)
 	// Make sure SysTick counter is disabled (dfu has issues otherwise)
 	SYST_CSR = 0;
+#endif
 
 	// Clear verified status
 	dfu_ctx.verified = DFU_VALIDATION_UNKNOWN;
@@ -229,6 +248,9 @@ void init_usb_bootloader( int config )
 __attribute__((noreturn))
 static inline void jump_to_app( uintptr_t addr )
 {
+	// ARM-Cortex vector tables all begin with
+	// the stack pointer, followed by reset handler
+
 	// addr is in r0
 	__asm__("ldr sp, [%[addr], #0]\n"
 		"ldr pc, [%[addr], #4]"
@@ -241,31 +263,30 @@ static inline void jump_to_app( uintptr_t addr )
 // NOTE: Code does not start here, see Lib/mk20dx.c
 void main()
 {
+	// Bootloader Section
+	extern uint32_t _app_rom;
+
 	// Prepared debug output (when supported)
 	uart_serial_setup();
-	printNL( NL "Bootloader DFU-Mode" );
+	printNL( NL "==> Bootloader" );
 
 	// Early setup
 	Chip_reset();
 	Device_reset();
 
-	// Bootloader Section
-	extern uint32_t _app_rom;
-
+#if defined(_kinetis_)
 	// We treat _app_rom as pointer to directly read the stack
 	// pointer and check for valid app code.  This is no fool
 	// proof method, but it should help for the first flash.
 	//
-	// Purposefully disabling the watchdog *after* the reset check this way
-	// if the chip goes into an odd state we'll reset to the bootloader (invalid firmware image)
-	// RCM_SRS0 & 0x20
+	// Rather than checking the watchdog signal, look for the sys_reset_to_loader_magic
+	// sequence. If not set after a watchdog, try to boot the firmware again.
+	// Otherwise if set, that means the firmware didn't fully initialize and go back to the bootloader
 	//
 	// Also checking for ARM lock-up signal (invalid firmware image)
 	// RCM_SRS1 & 0x02
 	if (    // PIN  (External Reset Pin/Switch)
 		RCM_SRS0 & 0x40
-		// WDOG (Watchdog timeout)
-		|| RCM_SRS0 & 0x20
 		// LOCKUP (ARM Core LOCKUP event)
 		|| RCM_SRS1 & 0x02
 		// Blank flash check
@@ -274,25 +295,60 @@ void main()
 		|| memcmp( (uint8_t*)&VBAT, sys_reset_to_loader_magic, sizeof(sys_reset_to_loader_magic) ) == 0
 	)
 	{
+		printNL("-> DFU-Mode");
 		// Bootloader mode
 		memset( (uint8_t*)&VBAT, 0, sizeof(sys_reset_to_loader_magic) );
 	}
 	else
 	{
-		// Enable Watchdog before jumping
-		// XXX (HaaTa) This watchdog cannot trigger an IRQ, as we're relocating the vector table
-		WDOG_UNLOCK = WDOG_UNLOCK_SEQ1;
-		WDOG_UNLOCK = WDOG_UNLOCK_SEQ2;
-		WDOG_TOVALH = 0;
-		WDOG_TOVALL = 1000;
-		WDOG_STCTRLH |= WDOG_STCTRLH_WDOGEN;
+		// Cleared by valid firmwre
+		for ( int pos = 0; pos < sizeof(sys_reset_to_loader_magic); pos++ )
+			(&VBAT)[ pos ] = sys_reset_to_loader_magic[ pos ];
 
 		// Firmware mode
+		print( NL "==> Booting Firmware..." );
 		uint32_t addr = (uintptr_t)&_app_rom;
 		SCB_VTOR = addr; // relocate vector table
 		jump_to_app( addr );
 	}
+#elif defined(_sam_)
+	if (    // PIN  (External Reset Pin/Switch)
+		(REG_RSTC_SR & RSTC_SR_RSTTYP_Msk) == RSTC_SR_RSTTYP_UserReset
+		// Blank flash check
+		|| _app_rom == 0xffffffff
+		// Software reset
+		|| memcmp( (uint8_t*)GPBR, sys_reset_to_loader_magic, sizeof(sys_reset_to_loader_magic) ) == 0
+	)
+	{
+		printNL("-> DFU-Mode");
+		// Bootloader mode
+		for ( int pos = 0; pos <= sizeof(sys_reset_to_loader_magic)/sizeof(GPBR->SYS_GPBR[0]); pos++ )
+			GPBR->SYS_GPBR[ pos ] = 0x00000000;
+	}
+	else
+	{
+		// Enable Watchdog before jumping
+		// XXX (HaaTa) This watchdog cannot trigger an IRQ, as we're relocating the vector table
+#if defined(DEBUG) && defined(JLINK)
+		WDT->WDT_MR = WDT_MR_WDV(1000000 / WDT_TICK_US) | WDT_MR_WDD(WDT_MAX_VALUE) | WDT_MR_WDFIEN | WDT_MR_WDDBGHLT | WDT_MR_WDIDLEHLT;
+		//WDT->WDT_MR = WDT_MR_WDDIS;
+#else
+		WDT->WDT_MR = WDT_MR_WDV(1000000 / WDT_TICK_US) | WDT_MR_WDD(WDT_MAX_VALUE) | WDT_MR_WDRSTEN | WDT_MR_WDRPROC | WDT_MR_WDDBGHLT | WDT_MR_WDIDLEHLT;
+#endif
 
+		// Cleared by valid firmware
+		for ( int pos = 0; pos <= sizeof(sys_reset_to_loader_magic)/4; pos++ )
+			GPBR->SYS_GPBR[ pos ] = ((uint32_t*)sys_reset_to_loader_magic)[ pos ];
+
+		// Firmware mode
+		print( NL "==> Booting Firmware..." );
+		uint32_t addr = (uintptr_t)&_app_rom;
+		SCB->VTOR = ((uint32_t) addr); // relocate vector table
+		jump_to_app( addr );
+	}
+#endif
+
+#if defined(_kinetis_)
 	// Detected CPU
 	print("CPU Id: ");
 	printHex( SCB_CPUID );
@@ -313,6 +369,39 @@ void main()
 	print( NL " Soft Rst - " );
 	printHex( memcmp( (uint8_t*)&VBAT, sys_reset_to_loader_magic, sizeof(sys_reset_to_loader_magic) ) == 0 );
 	print( NL );
+#elif defined(_sam_)
+	// Detected CPU
+	print("CPU Id: ");
+	printHex( SCB->CPUID );
+	print( NL "Chip Id: ");
+	printHex( CHIPID->CHIPID_CIDR );
+	print( NL "Chip Ext: ");
+	printHex( CHIPID->CHIPID_EXID );
+
+	// Bootloader Entry Reasons
+	switch ( REG_RSTC_SR & RSTC_SR_RSTTYP_Msk ) {
+	case RSTC_SR_RSTTYP_GeneralReset:
+		print( NL " GeneralReset");
+		break;
+	case RSTC_SR_RSTTYP_BackupReset:
+		print( NL " BackupReset");
+		break;
+	case RSTC_SR_RSTTYP_WatchdogReset:
+		print( NL " WatchdogReset");
+		break;
+	case RSTC_SR_RSTTYP_SoftwareReset:
+		print( NL " SoftwareReset");
+		break;
+	case RSTC_SR_RSTTYP_UserReset:
+		print( NL " UserReset");
+		break;
+	}
+	print( NL " _app_rom - ");
+	printHex( (uint32_t)_app_rom );
+	print( NL " Soft Rst - " );
+	printHex( memcmp( (uint8_t*)GPBR, sys_reset_to_loader_magic, sizeof(sys_reset_to_loader_magic) ) == 0 );
+	print( NL );
+#endif
 
 	// Device/Chip specific setup
 	Chip_setup();
@@ -326,17 +415,27 @@ void main()
 	print( NL );
 #endif
 
+#if defined(_kinetis_)
 	flash_prepare_flashing();
+#endif
 	dfu_usb_init(); // Initialize USB and dfu
 
 	// Main Loop
 	for (;;)
 	{
+#if defined(_kinetis_)
+		// Stroke watchdog
+		if ( WDOG_TMROUTL > 2 )
+		{
+			WDOG_REFRESH = WDOG_REFRESH_SEQ1;
+			WDOG_REFRESH = WDOG_REFRESH_SEQ2;
+		}
+
 		dfu_usb_poll();
+#endif
 
 		// Device specific functions
 		Chip_process();
 		Device_process();
 	}
 }
-

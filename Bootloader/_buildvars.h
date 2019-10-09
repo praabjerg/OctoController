@@ -27,6 +27,10 @@
 
 // ----- Defines -----
 
+// Helpers
+#define _STR_HELPER(x) #x
+#define _STR(x) _STR_HELPER(x)
+
 // You can change these to give your code its own name.
 #define STR_MANUFACTURER        u"@MANUFACTURER@"
 #define STR_PRODUCT             u"@BOOT_PRODUCT_STR@"
@@ -39,6 +43,7 @@
 // Windows, even though the driver is supplied by Microsoft, an
 // INF file is needed to load the driver.  These numbers need to
 // match the INF file.
+#define STR_WCID_DRIVER         "LIBUSB0\0"
 #define VENDOR_ID               @BOOT_VENDOR_ID@
 #define PRODUCT_ID              @BOOT_PRODUCT_ID@
 #define BCD_VERSION             @Git_Commit_Number@

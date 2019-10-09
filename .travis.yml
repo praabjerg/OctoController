@@ -3,7 +3,7 @@
 # Jacob Alexander 2016-2018
 
 sudo: required
-dist: trusty
+dist: xenial
 
 language:
   - c
@@ -21,7 +21,9 @@ env:
   # Keyboard Tests
   - DIR=Keyboards SCRIPT=ic_keyboards.bash # Input Club Keyboards
   - DIR=Keyboards SCRIPT=ic_keyboards.bash EnableHostOnlyBuild=true HostTest=kll.py # Input Club Keyboards - Host-Side Build
-  - DIR=Keyboards SCRIPT=others.bash
+
+  # Misc Keyboard Tests
+  - DIR=Keyboards/Others SCRIPT=others.bash
 
   # Debug Build Tests
   - DIR=Keyboards/Testing SCRIPT=all_tests.bash
@@ -40,6 +42,9 @@ matrix:
   # TODO - Still some travis clang issues
   allow_failures:
     - compiler: clang
+    # XXX (HaaTa): Docker environment creation is slow causing Travis-CI to halt jobs
+    # This will need to get fixed
+    - env: DIR=Dockerfiles SCRIPT=all.bash
 
   exclude:
     # Bootloader doesn't support clang yet
@@ -62,24 +67,18 @@ before_install:
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo add-apt-repository universe -y; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo add-apt-repository ppa:team-gcc-arm-embedded/ppa -y; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get update -qq; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install dfu-util tree exuberant-ctags gcc-arm-embedded -y; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then sudo apt-get install dfu-util tree exuberant-ctags gcc-arm-embedded python3-pip python3-setuptools -y; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; fi
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew upgrade python; fi # Homebrew defaults to Python 3 now, but we have to upgrade
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install tree ctags dfu-util binutils gnu-sed; fi
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]] && [[ "$CC" == "gcc" ]]; then brew tap Caskroom/cask; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]] && [[ "$CC" == "gcc" ]]; then brew tap armmbed/formulae; fi
   # This fails to download sometimes, just retry till it works
-  - while [[ "$TRAVIS_OS_NAME" == "osx" ]] && [[ "$CC" == "gcc" ]] && [[ "$EnableHostOnlyBuild" != "true" ]] && ! type arm-none-eabi-gcc &> /dev/null; do brew install Caskroom/cask/gcc-arm-embedded; done
+  - while [[ "$TRAVIS_OS_NAME" == "osx" ]] && [[ "$CC" == "gcc" ]] && [[ "$EnableHostOnlyBuild" != "true" ]] && ! type arm-none-eabi-gcc &> /dev/null; do brew install armmbed/formulae/arm-none-eabi-gcc; done
 
 # System setup
 install:
   # Info about OS
   - uname -a
-
-  # Pre-clone kll.git to speed-up build
-  - git clone https://github.com/kiibohd/kll.git
-
-  # Directory tree to validate kll.git
-  - tree
 
   # Compiler Version
   - ${CC} --version
@@ -91,9 +90,13 @@ install:
   # CMake Version
   - cmake --version
 
+  # Prepare pipenv
+  - sudo -H pip3 install --upgrade pip
+  - sudo -H pip3 install kll
+
 # Run test script(s)
 script:
-  - (cd ${DIR} && COMPILER=${CC} ./${SCRIPT})
+  - cd ${DIR} && PIPENV_ACTIVE=1 COMPILER=${CC} ./${SCRIPT}
 
 # Setup Deploy
 before_deploy:
@@ -122,8 +125,4 @@ deploy:
     repo: kiibohd/controller
     condition: $TRAVIS_OS_NAME = linux
     condition: $DEPLOY_NAME != ""
-
-# Post test script commands
-after_script:
-  - tree
 

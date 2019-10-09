@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2019 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,6 +39,10 @@
 
 
 // ----- Function Declarations -----
+
+void Layer_clearLayers();
+
+
 
 // ----- Variables -----
 
@@ -298,6 +302,7 @@ void Layer_layerShift_capability( TriggerMacro *trigger, uint8_t state, uint8_t 
 		// Only set the layer if it is disabled
 		if ( (LayerState[ layer ] & LayerStateType_Shift) != LayerStateType_Off )
 		{
+			Layer_layerStateSet( trigger, state, stateType, layer, LayerStateType_Off );
 			return;
 		}
 		break;
@@ -306,6 +311,7 @@ void Layer_layerShift_capability( TriggerMacro *trigger, uint8_t state, uint8_t 
 		// Only unset the layer if it is enabled
 		if ( (LayerState[ layer ] & LayerStateType_Shift) == LayerStateType_Off )
 		{
+			Layer_layerStateSet( trigger, state, stateType, layer, LayerStateType_Off );
 			return;
 		}
 		break;
@@ -388,6 +394,29 @@ void Layer_layerRotate_capability( TriggerMacro *trigger, uint8_t state, uint8_t
 	Layer_layerStateSet( trigger, state, stateType, Layer_rotationLayer, LayerStateType_Lock );
 }
 
+
+// Clear layer states
+// XXX (HaaTa): Does not send trigger events
+void Layer_clearLayers_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+{
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+		// Only use capability on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Layer_clearLayers()");
+		return;
+	default:
+		return;
+	}
+
+	// Clear layer states
+	Layer_clearLayers();
+}
 
 
 // ----- Functions -----
@@ -474,6 +503,19 @@ nat_ptr_t *Layer_layerLookup( TriggerEvent *event, uint8_t latch_expire )
 	// If no trigger macro is defined at the given layer, fallthrough to the next layer
 	for ( uint16_t layerIndex = macroLayerIndexStackSize; layerIndex != 0xFFFF; layerIndex-- )
 	{
+		// If this is a Layer trigger event, ignore other layers, always check the default map
+		switch ( event->type )
+		{
+		case TriggerType_Layer1:
+		case TriggerType_Layer2:
+		case TriggerType_Layer3:
+		case TriggerType_Layer4:
+			layerIndex = 0;
+			continue;
+		default:
+			break;
+		}
+
 		// Lookup Layer
 		const Layer *layer = &LayerIndex[ macroLayerIndexStack[ layerIndex ] ];
 
@@ -532,6 +574,19 @@ nat_ptr_t *Layer_layerLookup( TriggerEvent *event, uint8_t latch_expire )
 
 	// Otherwise no defined Trigger Macro
 	// Just ignore it
+	return 0;
+}
+
+// Layer active at top of the stack
+index_uint_t Layer_topActive()
+{
+	// Top of stack
+	if ( macroLayerIndexStackSize > 0 )
+	{
+		return macroLayerIndexStack[macroLayerIndexStackSize - 1];
+	}
+
+	// Default layer
 	return 0;
 }
 

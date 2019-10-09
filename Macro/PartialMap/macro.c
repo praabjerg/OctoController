@@ -1,16 +1,16 @@
 /* Copyright (C) 2014-2018 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -27,7 +27,7 @@
 #include <scan_loop.h>
 
 // Keymaps
-#include "usb_hid.h"
+#include <usb_hid.h> // Generated using kll (and hid-io/layouts) at compile time, in build directory
 #include <generatedKeymap.h> // Generated using kll at compile time, in build directory
 
 // Connect Includes
@@ -137,6 +137,9 @@ uint8_t macroPauseMode;
 // Macro step counter - If non-zero, the step counter counts down every time the macro module does one processing loop
 uint16_t macroStepCounter;
 
+// Macro rotation store - Each store is indexed, and is initialized to 0
+static uint8_t Macro_rotation_store[256]; // TODO (HaaTa): Use KLL to determine max usage (or dynamically size)
+
 
 // Latency resource
 static uint8_t macroLatencyResource;
@@ -167,6 +170,51 @@ const uint8_t ScheduleStateSize = ScheduleStateSize_define;
 
 
 // ----- Capabilities -----
+
+// Rotation capability
+// Maintains state and fires of a rotation event trigger
+void Macro_rotate_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+{
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
+	{
+	case CapabilityState_Initial:
+		// Only use on press
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Macro_rotate()");
+		return;
+	default:
+		return;
+	}
+
+	// Get storage index from arguments
+	uint8_t index = args[0];
+	// Get increment from arguments
+	int8_t increment = (int8_t)args[1];
+
+	// Trigger rotation
+	Macro_rotationState( index, increment );
+}
+
+// No-op capability (None)
+void Macro_none_capability( TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args )
+{
+	CapabilityState cstate = KLL_CapabilityState( state, stateType );
+
+	switch ( cstate )
+	{
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Macro_none()");
+		return;
+	default:
+		break;
+	}
+
+}
 
 // Test Thread-safe Capability
 // Capability used to test a thread-safe result
@@ -297,8 +345,8 @@ void Macro_showScheduleType( ScheduleState state )
 	}
 }
 
-// Shows a ScheduleParam
-void Macro_showScheduleParam( ScheduleParam *param, uint8_t analog )
+// Shows a Schedule
+void Macro_showSchedule( Schedule *param, uint8_t analog )
 {
 	// Analog
 	if ( analog )
@@ -316,20 +364,6 @@ void Macro_showScheduleParam( ScheduleParam *param, uint8_t analog )
 	printInt32( param->time.ms );
 	print(".");
 	printInt32( param->time.ticks );
-}
-
-// Shows a Schedule
-void Macro_showSchedule( Schedule *schedule, uint8_t analog )
-{
-	// Show first element
-	Macro_showScheduleParam( &schedule->params[0], analog );
-
-	// Iterate over each additional parameter of the schedule
-	for ( uint8_t c = 1; c < schedule->count; c++ )
-	{
-		print(",");
-		Macro_showScheduleParam( &schedule->params[c], analog );
-	}
 }
 
 // Shows a TriggerType
@@ -395,6 +429,11 @@ void Macro_showTriggerType( TriggerType type )
 		print("Active");
 		break;
 
+	// Rotation
+	case TriggerType_Rotation1:
+		print("Rotation");
+		break;
+
 	// Invalid
 	default:
 		print("INVALID");
@@ -415,7 +454,20 @@ void Macro_showTriggerEvent( TriggerEvent *event )
 	print(" ");
 
 	// Show state
-	Macro_showScheduleType( event->state );
+	switch ( event->type )
+	{
+	case TriggerType_Analog1:
+	case TriggerType_Analog2:
+	case TriggerType_Analog3:
+	case TriggerType_Analog4:
+	case TriggerType_Rotation1:
+		printInt8( event->state );
+		break;
+
+	default:
+		Macro_showScheduleType( event->state );
+		break;
+	}
 	print(" ");
 
 	// Show index number
@@ -476,6 +528,17 @@ uint8_t Macro_pressReleaseAdd( void *trigger_ptr )
 	case TriggerType_Analog2:
 	case TriggerType_Analog3:
 	case TriggerType_Analog4:
+	case TriggerType_Rotation1:
+		break;
+
+	case TriggerType_Animation1:
+	case TriggerType_Animation2:
+	case TriggerType_Animation3:
+	case TriggerType_Animation4:
+	case TriggerType_Sleep1:
+	case TriggerType_Resume1:
+	case TriggerType_Active1:
+	case TriggerType_Inactive1:
 		break;
 
 	// Invalid TriggerGuide type for Interconnect
@@ -832,6 +895,63 @@ void Macro_timeState( uint8_t type, uint16_t cur_time, uint8_t state )
 }
 
 
+// Rotation state update
+// Queues up a rotation trigger event
+// States:
+//   * 0x00 - Off
+//   * 0x01 - Activate
+//   * 0x02 - On
+//   * 0x03 - Deactivate
+void Macro_rotationState( uint8_t index, int8_t increment )
+{
+	// For now, always Rotation1
+	uint8_t type = TriggerType_Rotation1;
+
+	// If index is invalid, ignore
+	if ( index > RotationNum )
+	{
+		return;
+	}
+
+	// State is used as the increment position
+	int16_t position = Macro_rotation_store[index] + increment;
+
+	// If first starting, the first rotation is 0
+	if ( Macro_rotation_store[index] == 255 )
+	{
+		position = 0;
+	}
+
+	// Wrap-around
+	// May have to wrap-around multiple times
+	while ( position > Rotation_MaxParameter[index] )
+	{
+		position -= Rotation_MaxParameter[index] + 1;
+	}
+
+	// Reverse Wrap-around
+	if ( position < 0 )
+	{
+		// May have to wrap-around multiple times
+		while ( position * -1 > Rotation_MaxParameter[index] )
+		{
+			position += Rotation_MaxParameter[index] - 1;
+		}
+
+		// Do wrap-around
+		position += Rotation_MaxParameter[index] - 1;
+
+	}
+	Macro_rotation_store[index] = position;
+
+	// Queue event
+	macroTriggerEventBuffer[ macroTriggerEventBufferSize ].index = index;
+	macroTriggerEventBuffer[ macroTriggerEventBufferSize ].state = position;
+	macroTriggerEventBuffer[ macroTriggerEventBufferSize ].type  = type;
+	macroTriggerEventBufferSize++;
+}
+
+
 // [In]Activity detected, do TickStore update and signal generation
 // Returns 1 if a signal is sent
 uint8_t Macro_tick_update( TickStore *store, uint8_t type )
@@ -947,10 +1067,22 @@ void Macro_periodic()
 				}
 				break;
 
+			case TriggerType_Rotation1:
+			case TriggerType_Animation1:
+			case TriggerType_Animation2:
+			case TriggerType_Animation3:
+			case TriggerType_Animation4:
+			case TriggerType_Sleep1:
+			case TriggerType_Resume1:
+			case TriggerType_Active1:
+			case TriggerType_Inactive1:
+				// Do not re-add
+				break;
+
 			// Not implemented
 			default:
 				erro_msg("Interconnect Trigger Event Type - Not Implemented ");
-				printInt8( macroInterconnectCache[ c ].type );
+				printHex( macroInterconnectCache[ c ].type );
 				print( NL );
 				break;
 			}
@@ -1061,6 +1193,9 @@ inline void Macro_setup()
 
 	// Make sure macro trigger event buffer is empty
 	macroTriggerEventBufferSize = 0;
+
+	// Initial rotation store to 255s
+	memset( Macro_rotation_store, 255, sizeof(Macro_rotate_capability) );
 
 	// Setup Layers
 	Layer_setup();

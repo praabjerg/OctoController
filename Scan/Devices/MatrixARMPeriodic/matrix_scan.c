@@ -1,4 +1,4 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2019 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,20 +33,33 @@
 #include <print.h>
 #include <macro.h>
 #include <Lib/delay.h>
+#include <Lib/gpio.h>
 #include <Lib/periodic.h>
 #include <Lib/time.h>
 
 // Local Includes
 #include "matrix_scan.h"
 
-// Matrix Configuration
-#include <matrix.h>
-
 
 
 // ----- Defines -----
 
 #define TickStore_MaxTicks 255
+
+
+
+// ----- Matrix Definition -----
+// Scan Type
+const GPIO_Config Matrix_type = ScanCodeMatrixType_define;
+
+// Matrix
+const GPIO_Pin Matrix_cols[] = { ScanCodeStrobeList_define };
+const GPIO_Pin Matrix_rows[] = { ScanCodeSenseList_define };
+
+// Convenience Macros
+#define Matrix_colsNum sizeof( Matrix_cols ) / sizeof( GPIO_Pin )
+#define Matrix_rowsNum sizeof( Matrix_rows ) / sizeof( GPIO_Pin )
+#define Matrix_maxKeys sizeof( Matrix_scanArray ) / sizeof( KeyState )
 
 
 
@@ -81,6 +94,12 @@ CLIDict_Def( matrixCLIDict, "Matrix Module Commands" ) = {
 
 // Debounce Array
 static volatile KeyState Matrix_scanArray[ Matrix_colsNum * Matrix_rowsNum ];
+
+
+#if ScanCodeRemapping_define == 1
+// ScanCode Remapping Array
+static const uint16_t matrixScanCodeRemappingMatrix[] = { ScanCodeRemappingMatrix_define };
+#endif
 
 
 // Matrix debug flag - If set to 1, for each keypress the scan code is displayed in hex
@@ -122,106 +141,27 @@ static volatile uint16_t matrixStateReleaseCount;
 
 // ----- Functions -----
 
-// Pin action (Strobe, Sense, Strobe Setup, Sense Setup)
-uint8_t Matrix_pin( GPIO_Pin gpio, Type type )
-{
-#if defined(_kinetis_)
-	// NOTE: This function is highly dependent upon the organization of the register map
-	//       Only guaranteed to work with Freescale Kinetis MCUs
-	// Register width is defined as size of a pointer
-	unsigned int gpio_offset = gpio.port * 0x40   / sizeof(unsigned int*);
-	unsigned int port_offset = gpio.port * 0x1000 / sizeof(unsigned int*) + gpio.pin;
-
-	// Assumes 0x40 between GPIO Port registers and 0x1000 between PORT pin registers
-	// See Lib/kinetis.h
-	volatile unsigned int *GPIO_PDDR = (unsigned int*)(&GPIOA_PDDR) + gpio_offset;
-	volatile unsigned int *GPIO_PSOR = (unsigned int*)(&GPIOA_PSOR) + gpio_offset;
-	volatile unsigned int *GPIO_PCOR = (unsigned int*)(&GPIOA_PCOR) + gpio_offset;
-	volatile unsigned int *GPIO_PDIR = (unsigned int*)(&GPIOA_PDIR) + gpio_offset;
-	volatile unsigned int *PORT_PCR  = (unsigned int*)(&PORTA_PCR0) + port_offset;
-
-	// Operation depends on Type
-	switch ( type )
-	{
-	case Type_StrobeOn:
-		*GPIO_PSOR |= (1 << gpio.pin);
-		break;
-
-	case Type_StrobeOff:
-		*GPIO_PCOR |= (1 << gpio.pin);
-		break;
-
-	case Type_StrobeSetup:
-		// Set as output pin
-		*GPIO_PDDR |= (1 << gpio.pin);
-
-		// Configure pin with slow slew, high drive strength and GPIO mux
-		*PORT_PCR = PORT_PCR_SRE | PORT_PCR_DSE | PORT_PCR_MUX(1);
-
-		// Enabling open-drain if specified
-		switch ( Matrix_type )
-		{
-		case Config_Opendrain:
-			*PORT_PCR |= PORT_PCR_ODE;
-			break;
-
-		// Do nothing otherwise
-		default:
-			break;
-		}
-		break;
-
-	case Type_Sense:
-		return *GPIO_PDIR & (1 << gpio.pin) ? 1 : 0;
-
-	case Type_SenseSetup:
-		// Set as input pin
-		*GPIO_PDDR &= ~(1 << gpio.pin);
-
-		// Configure pin with passive filter and GPIO mux
-		*PORT_PCR = PORT_PCR_PFE | PORT_PCR_MUX(1);
-
-		// Pull resistor config
-		switch ( Matrix_type )
-		{
-		case Config_Pullup:
-			*PORT_PCR |= PORT_PCR_PE | PORT_PCR_PS;
-			break;
-
-		case Config_Pulldown:
-			*PORT_PCR |= PORT_PCR_PE;
-			break;
-
-		// Do nothing otherwise
-		default:
-			break;
-		}
-		break;
-	}
-#elif defined(_sam_)
-	//SAM TODO
-#endif
-
-	return 0;
-}
-
-
 // Setup GPIO pins for matrix scanning
 void Matrix_setup()
 {
 	// Register Matrix CLI dictionary
 	CLI_registerDictionary( matrixCLIDict, matrixCLIDictName );
 
+#if defined(_sam_)
+	// 31.5.8 Reading the I/O line levels requires the clock of the PIO Controller to be enabled
+	PMC->PMC_PCER0 = (1 << ID_PIOA) | (1 << ID_PIOB);
+#endif
+
 	// Setup Strobe Pins
 	for ( uint8_t pin = 0; pin < Matrix_colsNum; pin++ )
 	{
-		Matrix_pin( Matrix_cols[ pin ], Type_StrobeSetup );
+		GPIO_Ctrl( Matrix_cols[ pin ], GPIO_Type_DriveSetup, Matrix_type );
 	}
 
 	// Setup Sense Pins
 	for ( uint8_t pin = 0; pin < Matrix_rowsNum; pin++ )
 	{
-		Matrix_pin( Matrix_rows[ pin ], Type_SenseSetup );
+		GPIO_Ctrl( Matrix_rows[ pin ], GPIO_Type_ReadSetup, Matrix_type );
 	}
 
 	// Clear out Debounce Array
@@ -309,7 +249,6 @@ inline uint8_t Matrix_totalColumns()
 // This module keeps track of the next strobe to scan
 uint8_t Matrix_single_scan()
 {
-
 	// Start latency measurement
 	Latency_start_time( matrixLatencyResource );
 
@@ -320,8 +259,22 @@ uint8_t Matrix_single_scan()
 	// Current strobe
 	uint8_t strobe = matrixCurrentStrobe;
 
+	// XXX (HaaTa)
+	// Before strobing drain each sense line
+	// This helps with faulty pull-up resistors (particularily with SAM4S)
+	for ( uint8_t sense = 0; sense < Matrix_rowsNum; sense++ )
+	{
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_DriveSetup, Matrix_type );
+#if ScanCodeMatrixInvert_define == 2 // GPIO_Config_Pulldown
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_DriveLow, Matrix_type );
+#elif ScanCodeMatrixInvert_define == 1 // GPIO_Config_Pullup
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_DriveHigh, Matrix_type );
+#endif
+		GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_ReadSetup, Matrix_type );
+	}
+
 	// Strobe Pin
-	Matrix_pin( Matrix_cols[ strobe ], Type_StrobeOn );
+	GPIO_Ctrl( Matrix_cols[ strobe ], GPIO_Type_DriveHigh, Matrix_type );
 
 	// Used to allow the strobe signal to propagate, generally not required
 	if ( strobeDelayTime > 0 )
@@ -334,10 +287,15 @@ uint8_t Matrix_single_scan()
 	{
 		// Key position
 		uint16_t key = Matrix_colsNum * sense + strobe;
+#if ScanCodeRemapping_define == 1
+		uint16_t key_disp = matrixScanCodeRemappingMatrix[key];
+#else
 		uint16_t key_disp = key + 1; // 1-indexed for reporting purposes
+#endif
 
 		// Check bounds, before attempting to scan
-		if ( key_disp > MaxScanCode_KLL )
+		// 1-indexed as ScanCode 0 is not used
+		if ( key_disp > MaxScanCode_KLL || key_disp == 0 )
 		{
 			continue;
 		}
@@ -350,7 +308,8 @@ uint8_t Matrix_single_scan()
 		// Somewhat longer with switch bounciness
 		// The advantage of this is that the count is ongoing and never needs to be reset
 		// State still needs to be kept track of to deal with what to send to the Macro module
-		if ( Matrix_pin( Matrix_rows[ sense ], Type_Sense ) )
+		// Compared against the default state value (ScanCodeMatrixInvert_define), usually 0
+		if ( GPIO_Ctrl( Matrix_rows[ sense ], GPIO_Type_Read, Matrix_type ) != ScanCodeMatrixInvert_define )
 		{
 			// Only update if not going to wrap around
 			if ( state->activeCount < DebounceDivThreshold ) state->activeCount += 1;
@@ -391,6 +350,7 @@ uint8_t Matrix_single_scan()
 				if ( lastTransition < debounceExpiryTime )
 				{
 					state->curState = state->prevState;
+					Macro_keyState( key_disp, state->curState );
 					continue;
 				}
 
@@ -407,6 +367,7 @@ uint8_t Matrix_single_scan()
 				if ( lastTransition < debounceExpiryTime )
 				{
 					state->curState = state->prevState;
+					Macro_keyState( key_disp, state->curState );
 					continue;
 				}
 
@@ -496,7 +457,7 @@ uint8_t Matrix_single_scan()
 	}
 
 	// Unstrobe Pin
-	Matrix_pin( Matrix_cols[ strobe ], Type_StrobeOff );
+	GPIO_Ctrl( Matrix_cols[ strobe ], GPIO_Type_DriveLow, Matrix_type );
 
 	// Measure ending latency
 	Latency_end_time( matrixLatencyResource );

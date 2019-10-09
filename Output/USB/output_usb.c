@@ -1,4 +1,4 @@
-/* Copyright (C) 2011-2018 by Jacob Alexander
+/* Copyright (C) 2011-2019 by Jacob Alexander
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -51,7 +51,6 @@
 #include <output_com.h>
 
 
-
 // ----- Macros -----
 
 // Used to build a bitmap lookup table from a byte addressable array
@@ -67,13 +66,25 @@
 
 
 
+// ----- Enumerations -----
+
+typedef enum {
+	OutputReset_None       = 0, // Do nothing
+	OutputReset_Restart    = 1, // Clear USB stack and restart the firmware
+	OutputReset_Bootloader = 2, // Clear USB stack and jump to bootloader
+} OutputReset;
+
+
+
 // ----- Function Declarations -----
 
 void cliFunc_idle       ( char* args );
 void cliFunc_kbdProtocol( char* args );
 void cliFunc_readLEDs   ( char* args );
 void cliFunc_usbAddr    ( char* args );
+void cliFunc_usbConf    ( char* args );
 void cliFunc_usbInitTime( char* args );
+void cliFunc_usbErrors  ( char* args );
 
 
 
@@ -84,14 +95,18 @@ CLIDict_Entry( idle,        "Show/set the HID Idle time (multiples of 4 ms)." );
 CLIDict_Entry( kbdProtocol, "Keyboard Protocol Mode: 0 - Boot, 1 - OS/NKRO Mode." );
 CLIDict_Entry( readLEDs,    "Read LED byte:" NL "\t\t1 NumLck, 2 CapsLck, 4 ScrlLck, 16 Kana, etc." );
 CLIDict_Entry( usbAddr,     "Shows the negotiated USB unique Id, given to device by host." );
+CLIDict_Entry( usbConf,     "Shows whether USB is configured or not." );
 CLIDict_Entry( usbInitTime, "Displays the time in ms from usb_init() till the last setup call." );
+CLIDict_Entry( usbErrors,   "Displays number of usb errors since startup." );
 
 CLIDict_Def( usbCLIDict, "USB Module Commands" ) = {
 	CLIDict_Item( idle ),
 	CLIDict_Item( kbdProtocol ),
 	CLIDict_Item( readLEDs ),
 	CLIDict_Item( usbAddr ),
+	CLIDict_Item( usbConf ),
 	CLIDict_Item( usbInitTime ),
+	CLIDict_Item( usbErrors ),
 	{ 0, 0, 0 } // Null entry for dictionary end
 };
 
@@ -107,16 +122,8 @@ volatile uint8_t  USBKeys_Sent;
 volatile uint8_t  USBKeys_LEDs;
 volatile uint8_t  USBKeys_LEDs_prev;
 
-// Currently pressed mouse buttons, bitmask, 0 represents no buttons pressed
-volatile uint16_t USBMouse_Buttons;
-
-// Relative mouse axis movement, stores pending movement
-volatile int16_t USBMouse_Relative_x;
-volatile int16_t USBMouse_Relative_y;
-
-// Mouse wheel pending action
-volatile int8_t USBMouse_VertWheel;
-volatile int8_t USBMouse_HoriWheel;
+// USBMouse Buffer
+volatile USBMouse USBMouse_primary; // Primary mouse send buffer
 
 // Protocol setting from the host.
 // 0 - Boot Mode
@@ -124,9 +131,6 @@ volatile int8_t USBMouse_HoriWheel;
 volatile uint8_t  USBKeys_Protocol = USBProtocol_define;
 volatile uint8_t  USBKeys_Protocol_New = USBProtocol_define;
 volatile uint8_t  USBKeys_Protocol_Change; // New value to set to USBKeys_Protocol if _Change is set
-
-// Indicate if USB should send update
-USBMouseChangeState USBMouse_Changed;
 
 // the idle configuration, how often we send the report to the
 // host (ms * 4) even when it hasn't changed
@@ -144,6 +148,14 @@ volatile uint16_t USBInit_Ticks;
 
 // USB Address - Set by host, unique to the bus
 volatile uint8_t USBDev_Address;
+
+// USB Errors
+volatile uint32_t USBStatus_FrameErrors;
+
+// Scheduled USB resets, used to clear USB packets before bringing down the USB stack
+// This is useful for OSs like Windows where then OS doesn't clear the current state
+// after the keyboard is disconnected (i.e. Ctrl keeps being held until Ctrl is pressed again).
+volatile static uint8_t Output_reset_schedule;
 
 // Latency measurement resource
 static uint8_t outputPeriodicLatencyResource;
@@ -412,10 +424,11 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 	// Depending on which mode the keyboard is in, USBKeys_Keys array is used differently
 	// Boot mode - Maximum of 6 byte codes
 	// NKRO mode - Each bit of the 26 byte corresponds to a key
-	//  Bits   0 -  45 (bytes  0 -  5) correspond to USB Codes   4 -  49 (Main)
-	//  Bits  48 - 161 (bytes  6 - 20) correspond to USB Codes  51 - 164 (Secondary)
-	//  Bits 168 - 213 (bytes 21 - 26) correspond to USB Codes 176 - 221 (Tertiary)
-	//  Bits 214 - 216                 unused
+	//  Bits   0 -   3                 unused
+	//  Bits   4 - 164 (bytes  0 - 20) correspond to USB Codes   4 - 164 (Keyboard Section)
+	//  Bits 165 - 175                 unused
+	//  Bits 176 - 221 (bytes 22 - 27) correspond to USB Codes 176 - 221 (Keypad Section)
+	//  Bits 222 - 223                 unused
 	uint8_t bytePosition = 0;
 	uint8_t byteShift = 0;
 
@@ -461,7 +474,7 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 					}
 					USBKeys_Sent--;
 					keyFound = 1;
-					USBKeys_primary.changed = USBKeyChangeState_MainKeys;
+					USBKeys_primary.changed = USBKeyChangeState_Keys;
 					break;
 				}
 			}
@@ -477,7 +490,7 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 			if ( keyPress && !keyFound )
 			{
 				USBKeys_primary.keys[USBKeys_Sent++] = key;
-				USBKeys_primary.changed = USBKeyChangeState_MainKeys;
+				USBKeys_primary.changed = USBKeyChangeState_Keys;
 			}
 		}
 		break;
@@ -498,32 +511,20 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 			USBKeys_primary.changed |= USBKeyChangeState_Modifiers;
 			break;
 		}
-		// First 6 bytes
-		else if ( key >= 4 && key <= 49 )
+		// Handle Keyboard and Keypad Sections
+		else if ( key >= 1 && key <= 221 )
 		{
 			// Lookup (otherwise division or multiple checks are needed to do alignment)
-			// Starting at 0th position, each byte has 8 bits, starting at 4th bit
-			uint8_t keyPos = key + (0 * 8 - 4); // Starting position in array, Ignoring 4 keys
-			switch ( keyPos )
+			// Starting at 0th position, each byte has 8 bits
+			switch ( key )
 			{
+				// Keyboard Section
 				byteLookup( 0 );
 				byteLookup( 1 );
 				byteLookup( 2 );
 				byteLookup( 3 );
 				byteLookup( 4 );
 				byteLookup( 5 );
-			}
-
-			USBKeys_primary.changed |= USBKeyChangeState_MainKeys;
-		}
-		// Next 14 bytes
-		else if ( key >= 51 && key <= 155 )
-		{
-			// Lookup (otherwise division or multiple checks are needed to do alignment)
-			// Starting at 6th byte position, each byte has 8 bits, starting at 51st bit
-			uint8_t keyPos = key + (6 * 8 - 51); // Starting position in array
-			switch ( keyPos )
-			{
 				byteLookup( 6 );
 				byteLookup( 7 );
 				byteLookup( 8 );
@@ -538,51 +539,35 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 				byteLookup( 17 );
 				byteLookup( 18 );
 				byteLookup( 19 );
-			}
-
-			USBKeys_primary.changed |= USBKeyChangeState_SecondaryKeys;
-		}
-		// Next byte
-		else if ( key >= 157 && key <= 164 )
-		{
-			// Lookup (otherwise division or multiple checks are needed to do alignment)
-			uint8_t keyPos = key + (20 * 8 - 157); // Starting position in array, Ignoring 6 keys
-			switch ( keyPos )
-			{
 				byteLookup( 20 );
-			}
 
-			USBKeys_primary.changed |= USBKeyChangeState_TertiaryKeys;
-		}
-		// Last 6 bytes
-		else if ( key >= 176 && key <= 221 )
-		{
-			// Lookup (otherwise division or multiple checks are needed to do alignment)
-			uint8_t keyPos = key + (21 * 8 - 176); // Starting position in array
-			switch ( keyPos )
-			{
-				byteLookup( 21 );
+				// Padding
+				// XXX (HaaTa) Not necessary to include
+				//byteLookup( 21 );
+
+				// Keypad Section
 				byteLookup( 22 );
 				byteLookup( 23 );
 				byteLookup( 24 );
 				byteLookup( 25 );
 				byteLookup( 26 );
+				byteLookup( 27 );
 			}
 
-			USBKeys_primary.changed |= USBKeyChangeState_QuartiaryKeys;
+			USBKeys_primary.changed |= USBKeyChangeState_Keys;
 		}
 		// Received 0x00
 		// This is a special USB Code that internally indicates a "break"
 		// It is used to send "nothing" in order to break up sequences of USB Codes
 		else if ( key == 0x00 )
 		{
-			USBKeys_primary.changed |= USBKeyChangeState_MainKeys;
+			USBKeys_primary.changed |= USBKeyChangeState_Keys;
 			break;
 		}
 		// Invalid key
 		else
 		{
-			warn_msg("USB Code not within 4-49 (0x4-0x31), 51-155 (0x33-0x9B), 157-164 (0x9D-0xA4), 176-221 (0xB0-0xDD) or 224-231 (0xE0-0xE7) NKRO Mode: ");
+			warn_msg("USB Code not within 4-155 (0x4-0x9B), 157-164 (0x9D-0xA4), 176-221 (0xB0-0xDD) or 224-231 (0xE0-0xE7) NKRO Mode: ");
 			printHex( key );
 			print( NL );
 			break;
@@ -602,6 +587,7 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 
 		break;
 	}
+
 #endif
 }
 
@@ -638,23 +624,23 @@ void Output_usbMouse_capability( TriggerMacro *trigger, uint8_t state, uint8_t s
 		// Press/Hold
 		if ( mouse_button )
 		{
-			USBMouse_Buttons |= (1 << mouse_button_shift);
+			USBMouse_primary.buttons |= (1 << mouse_button_shift);
 		}
 
 		if ( mouse_x )
 		{
-			USBMouse_Relative_x = mouse_x;
+			USBMouse_primary.relative_x = mouse_x;
 		}
 		if ( mouse_y )
 		{
-			USBMouse_Relative_y = mouse_y;
+			USBMouse_primary.relative_y = mouse_y;
 		}
 		break;
 	case CapabilityState_Last:
 		// Release
 		if ( mouse_button )
 		{
-			USBMouse_Buttons &= ~(1 << mouse_button_shift);
+			USBMouse_primary.buttons &= ~(1 << mouse_button_shift);
 		}
 		break;
 	case CapabilityState_Debug:
@@ -668,12 +654,12 @@ void Output_usbMouse_capability( TriggerMacro *trigger, uint8_t state, uint8_t s
 	// Trigger updates
 	if ( mouse_button )
 	{
-		USBMouse_Changed |= USBMouseChangeState_Buttons;
+		USBMouse_primary.changed |= USBMouseChangeState_Buttons;
 	}
 
 	if ( mouse_x || mouse_y )
 	{
-		USBMouse_Changed |= USBMouseChangeState_Relative;
+		USBMouse_primary.changed |= USBMouseChangeState_Relative;
 	}
 }
 
@@ -697,14 +683,14 @@ void Output_usbMouseWheel_capability( TriggerMacro *trigger, uint8_t state, uint
 		// Press/Hold
 		if ( wheel_vert )
 		{
-			USBMouse_VertWheel = wheel_vert;
-			USBMouse_Changed |= USBMouseChangeState_WheelVert;
+			USBMouse_primary.vertwheel = wheel_vert;
+			USBMouse_primary.changed |= USBMouseChangeState_WheelVert;
 		}
 
 		if ( wheel_hori )
 		{
-			USBMouse_HoriWheel = wheel_hori;
-			USBMouse_Changed |= USBMouseChangeState_WheelHori;
+			USBMouse_primary.horiwheel = wheel_hori;
+			USBMouse_primary.changed |= USBMouseChangeState_WheelHori;
 		}
 		break;
 	case CapabilityState_Debug:
@@ -734,12 +720,28 @@ void USB_flushBuffers()
 
 	// Reset USBKeys_Keys size
 	USBKeys_Sent = 0;
+
+	// Clear mouse state
+	USBMouse_primary.buttons = 0;
+	USBMouse_primary.relative_x = 0;
+	USBMouse_primary.relative_y = 0;
+	USBMouse_primary.vertwheel = 0;
+	USBMouse_primary.horiwheel = 0;
+	USBMouse_primary.changed = 0;
+
+	// Make sure everything actually flushes
+	USBKeys_primary.changed = 1;
+	USBKeys_idle.changed = 1;
+	USBMouse_primary.changed = 1;
 }
 
 
 // USB Module Setup
 inline void USB_setup()
 {
+	// Reset frame error counter
+	USBStatus_FrameErrors = 0;
+
 	// Initialize the USB
 	// If a USB connection does not exist, just ignore it
 	// All usb related functions will non-fatally fail if called
@@ -756,25 +758,25 @@ inline void USB_setup()
 	USBKeys_LEDs_prev = 0;
 	USBKeys_LEDs = 0;
 
-	// Clear mouse state
-	USBMouse_Buttons = 0;
-	USBMouse_Relative_x = 0;
-	USBMouse_Relative_y = 0;
-	USBMouse_VertWheel = 0;
-	USBMouse_HoriWheel = 0;
-	USBMouse_Changed = 0;
-
 	// Clear USB address
 	USBDev_Address = 0;
+
+	// Clear USB reset state
+	Output_reset_schedule = OutputReset_None;
 
 	// Flush key buffers
 	USB_flushBuffers();
 
 	// Check if we need to disable secure bootloader mode
 	// This is done by setting both 32 bit Kiibohd specific VBAT secure register regions
-#if ( defined(_kii_v1_) || defined(_kii_v2_) ) && SecureBootloader_define == 0
+#if SecureBootloader_define == 0
+#if ( defined(_kii_v1_) || defined(_kii_v2_) )
 	VBAT_SECURE1 = 0;
 	VBAT_SECURE2 = 0;
+#elif defined(_kii_v3_)
+	GPBR_SECURE1 = 0;
+	GPBR_SECURE2 = 0;
+#endif
 #endif
 
 #if enableRawIO_define == 1
@@ -812,12 +814,24 @@ inline void USB_poll()
 }
 
 
+// Check if USB is ready
+// Returns 1 if ready, 0 if not
+uint8_t USB_ready()
+{
+#if !defined(_host_)
+	return usb_configured();
+#else
+	return 1;
+#endif
+}
+
+
 // Gather USB HID LED states
 // Keeps track of previous state, and sends new state to PartialMap
 void USB_indicator_update()
 {
 	// Check each bit of the indicator byte
-	for ( uint8_t bit = 0; bit < LED_KANA; bit++ )
+	for ( uint8_t bit = 0; bit < LED_KANA_5; bit++ )
 	{
 		uint8_t id = bit + 1; // Conversion to USB HID Indicator code
 
@@ -830,7 +844,7 @@ void USB_indicator_update()
 			continue;
 		}
 		// Detect if on
-		else if ( cur == prev )
+		else if ( cur && cur == prev )
 		{
 			// On
 			Macro_ledState( id, ScheduleType_On );
@@ -838,15 +852,50 @@ void USB_indicator_update()
 		// Detect if press
 		else if ( cur )
 		{
+			// TODO (HaaTa): Temporary Lock led control
+#if Scan_KiraKeyboard_define == 1 && !defined(_host_)
+			switch ( id )
+			{
+			case LED_NUM_LOCK_1:
+				Scan_numlock(cur);
+				break;
+			case LED_CAPS_LOCK_2:
+				Scan_capslock(cur);
+				break;
+			case LED_SCROLL_LOCK_3:
+				Scan_scrolllock(cur);
+				break;
+			default:
+				break;
+			}
+#endif
 			// Activate
 			Macro_ledState( id, ScheduleType_A );
 		}
 		// Detect if release
 		else if ( prev )
 		{
+			// TODO (HaaTa): Temporary Lock led control
+#if Scan_KiraKeyboard_define == 1 && !defined(_host_)
+			switch ( id )
+			{
+			case LED_NUM_LOCK_1:
+				Scan_numlock(cur);
+				break;
+			case LED_CAPS_LOCK_2:
+				Scan_capslock(cur);
+				break;
+			case LED_SCROLL_LOCK_3:
+				Scan_scrolllock(cur);
+				break;
+			default:
+				break;
+			}
+#endif
 			// Deactivate
 			Macro_ledState( id, ScheduleType_D );
 		}
+
 	}
 
 	// Update for next state comparison
@@ -869,10 +918,21 @@ inline void USB_periodic()
 	// Start latency measurement
 	Latency_start_time( outputPeriodicLatencyResource );
 
+	// Check to see if we need to reset the USB buffers
+	switch ( Output_reset_schedule )
+	{
+	case OutputReset_Restart:
+	case OutputReset_Bootloader:
+		USB_flushBuffers();
+		break;
+	}
+
 #if enableMouse_define == 1
 	// Process mouse actions
-	while ( USBMouse_Changed )
+	while ( USBMouse_primary.changed && USB_ready() )
+	{
 		usb_mouse_send();
+	}
 #endif
 
 #if enableKeyboard_define == 1
@@ -897,7 +957,7 @@ inline void USB_periodic()
 	}
 
 	// Send keypresses while there are pending changes
-	while ( USBKeys_primary.changed )
+	while ( USBKeys_primary.changed && USB_ready() )
 	{
 		usb_keyboard_send( (USBKeys*)&USBKeys_primary, USBKeys_Protocol );
 	}
@@ -919,6 +979,26 @@ inline void USB_periodic()
 	// Monitor USB Suspend/Sleep State
 	USB_suspend_status_update();
 #endif
+
+	// Check if a reset needs to be scheduled
+	switch ( Output_reset_schedule )
+	{
+	case OutputReset_Restart:
+		// Clear schedule
+		Output_reset_schedule = OutputReset_None;
+
+		// Restart firmware
+		usb_device_software_reset();
+		break;
+
+	case OutputReset_Bootloader:
+		// Clear schedule
+		Output_reset_schedule = OutputReset_None;
+
+		// Jump to bootloader
+		usb_device_reload();
+		break;
+	}
 
 	// End latency measurement
 	Latency_end_time( outputPeriodicLatencyResource );
@@ -967,16 +1047,17 @@ void USB_NKRODebug( USBKeys *buffer )
 	print("\033[1;34mNKRO\033[0m ");
 	printHex_op( buffer->modifiers, 2 );
 	print(" ");
-	for ( uint8_t c = 0; c < 6; c++ )
+	// Keyboard Section
+	for ( uint8_t c = 0; c < 21; c++ )
+	{
 		printHex_op( buffer->keys[ c ], 2 );
+	}
 	print(" ");
-	for ( uint8_t c = 6; c < 20; c++ )
+	// Keypad Section
+	for ( uint8_t c = 22; c < 28; c++ )
+	{
 		printHex_op( buffer->keys[ c ], 2 );
-	print(" ");
-	printHex_op( buffer->keys[20], 2 );
-	print(" ");
-	for ( uint8_t c = 21; c < 27; c++ )
-		printHex_op( buffer->keys[ c ], 2 );
+	}
 	print( NL );
 }
 
@@ -984,14 +1065,14 @@ void USB_NKRODebug( USBKeys *buffer )
 // Sets the device into firmware reload mode
 inline void USB_firmwareReload()
 {
-	usb_device_reload();
+	Output_reset_schedule = OutputReset_Bootloader;
 }
 
 
 // Soft Chip Reset
 inline void USB_softReset()
 {
-	usb_device_software_reset();
+	Output_reset_schedule = OutputReset_Restart;
 }
 
 
@@ -1021,6 +1102,10 @@ inline int USB_getchar()
 // USB Send Character to output buffer
 inline int USB_putchar( char c )
 {
+	if (HIDIO_VT_Connected) {
+		return HIDIO_putchar( c );
+	}
+
 #if enableVirtualSerialPort_define == 1
 	return usb_serial_putchar( c );
 #else
@@ -1041,6 +1126,10 @@ inline int USB_putstr( char* str )
 	// Count characters until NULL character, then send the amount counted
 	while ( str[count] != '\0' )
 		count++;
+
+	if (HIDIO_VT_Connected) {
+		return HIDIO_putstr( str, count );
+	}
 
 	return usb_serial_write( str, count );
 #else
@@ -1066,7 +1155,7 @@ int USB_rawio_getbuffer( char* buffer )
 {
 #if enableRawIO_define == 1
 	// No timeout, fail immediately
-	return usb_rawio_rx( (void*)buffer, 0 );
+	return usb_rawio_rx( (void*)buffer, 100 );
 #else
 	return 0;
 #endif
@@ -1079,7 +1168,7 @@ int USB_rawio_sendbuffer( char* buffer )
 {
 #if enableRawIO_define == 1
 	// No timeout, fail immediately
-	return usb_rawio_tx( (void*)buffer, 0 );
+	return usb_rawio_tx( (void*)buffer, 100 );
 #else
 	return 0;
 #endif
@@ -1161,6 +1250,16 @@ void cliFunc_usbAddr( char* args )
 }
 
 
+void cliFunc_usbConf( char* args )
+{
+	print(NL);
+	info_msg("USB Configured: ");
+#if !defined(_host_)
+	printInt8( usb_configured() );
+#endif
+}
+
+
 void cliFunc_usbInitTime( char* args )
 {
 	// Calculate overall USB initialization time
@@ -1171,5 +1270,13 @@ void cliFunc_usbInitTime( char* args )
 	print(" ms - ");
 	printInt16( USBInit_Ticks );
 	print(" ticks");
+}
+
+
+void cliFunc_usbErrors( char* args )
+{
+	print(NL);
+	info_msg("USB Frame Errors: ");
+	printInt32( USBStatus_FrameErrors );
 }
 

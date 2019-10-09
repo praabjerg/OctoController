@@ -1,16 +1,16 @@
-/* Copyright (C) 2014-2018 by Jacob Alexander
+/* Copyright (C) 2014-2019 by Jacob Alexander
  *
  * This file is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * This file is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with this file.  If not, see <http://www.gnu.org/licenses/>.
  */
 
@@ -221,11 +221,14 @@ TriggerMacroVote Trigger_evalShortTriggerMacroVote_DRO( ScheduleState state )
 
 
 // Votes on the given key vs. guide, short macros
-TriggerMacroVote Trigger_evalShortTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide )
+TriggerMacroVote Trigger_evalShortTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide, TriggerMacroVote *cur_vote )
 {
 	// Lookup full index
 	var_uint_t guide_index = KLL_TriggerIndex_loopkup( guide->type, guide->scanCode );
 	var_uint_t event_index = KLL_TriggerIndex_loopkup( event->type, event->index );
+
+	// Return value
+	TriggerMacroVote vote = TriggerMacroVote_Invalid;
 
 	// Depending on key type
 	switch ( guide->type )
@@ -259,10 +262,42 @@ TriggerMacroVote Trigger_evalShortTriggerMacroVote( TriggerEvent *event, Trigger
 			)
 		)
 		{
-			return Trigger_evalShortTriggerMacroVote_PHRO( event->state );
+			// If this trigger is generic, we can just vote based on the incoming state
+			if ( guide->state & ScheduleType_Gen )
+			{
+				vote = Trigger_evalShortTriggerMacroVote_PHRO( event->state );
+				break;
+			}
+
+			// TODO (HaaTa) Implement state scheduling
+			erro_print("State Scheduling not implemented yet...");
+		}
+
+		vote = TriggerMacroVote_DoNothing;
+		break;
+
+	/*
+	// LED State Type
+	case TriggerType_LED1:
+		// XXX (HaaTa) This is an initial version of State Scheduling
+		//             For any state match that is not ScheduleType_A, set to ScheduleType_A
+		//             as this will indicate a pulse to the capability.
+		if (
+			guide_index == event_index &&
+			guide->type == event->type
+		)
+		{
+			// When state scheduling is specified
+			// TODO (HaaTa); We should probably move to another state type for "auto" schedule types
+			if ( guide->state == event->state && guide->state != ScheduleType_A )
+			{
+				return Trigger_evalShortTriggerMacroVote_PHRO( ScheduleType_A );
+			}
+			//return Trigger_evalShortTriggerMacroVote_PHRO( event->state );
 		}
 
 		return TriggerMacroVote_DoNothing;
+	*/
 
 	// Analog State Type
 	case TriggerType_Analog1:
@@ -284,10 +319,32 @@ TriggerMacroVote Trigger_evalShortTriggerMacroVote( TriggerEvent *event, Trigger
 			guide->state == event->state
 		)
 		{
-			return Trigger_evalShortTriggerMacroVote_DRO( event->state );
+			vote = Trigger_evalShortTriggerMacroVote_DRO( event->state );
+			break;
 		}
 
-		return TriggerMacroVote_DoNothing;
+		vote = TriggerMacroVote_DoNothing;
+		break;
+
+	// Rotation State Type
+	case TriggerType_Rotation1:
+		// Rotation triggers use state as the index, rather than encoding a type of action
+		// There is only "activated" state for rotations, which is only sent once
+		// This makes rotations not so useful for long macros
+		// (though it may be possible to implement it if there is demand)
+		if (
+			guide_index == event_index &&
+			guide->type == event->type &&
+			guide->state == event->state // <== This is the rotation position
+		)
+		{
+			// Only ever "Pressed", other states are not used with rotations
+			vote = Trigger_evalShortTriggerMacroVote_PHRO( ScheduleType_P );
+			break;
+		}
+
+		vote = TriggerMacroVote_DoNothing;
+		break;
 
 	// Invalid State Type
 	default:
@@ -295,8 +352,21 @@ TriggerMacroVote Trigger_evalShortTriggerMacroVote( TriggerEvent *event, Trigger
 		break;
 	}
 
-	// XXX Shouldn't reach here
-	return TriggerMacroVote_Invalid;
+	// If this is a combo macro, make a preference for TriggerMacroVote_Pass instead of TriggerMacroVote_PassRelease
+	if ( *cur_vote != TriggerMacroVote_Invalid && event_index == guide_index )
+	{
+		// Make sure the votes are different and one of them are Pass
+		if ( *cur_vote != vote
+			&& ( *cur_vote == TriggerMacroVote_Pass || vote == TriggerMacroVote_Pass )
+			&& ( *cur_vote == TriggerMacroVote_PassRelease || vote == TriggerMacroVote_PassRelease )
+		)
+		{
+			*cur_vote = TriggerMacroVote_Pass;
+			vote = TriggerMacroVote_Pass;
+		}
+	}
+
+	return vote;
 }
 
 
@@ -378,7 +448,7 @@ TriggerMacroVote Trigger_evalLongTriggerMacroVote_DRO( ScheduleState state, uint
 
 // Votes on the given key vs. guide, long macros
 // A long macro is defined as a guide with more than 1 combo
-TriggerMacroVote Trigger_evalLongTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide )
+TriggerMacroVote Trigger_evalLongTriggerMacroVote( TriggerEvent *event, TriggerGuide *guide, TriggerMacroVote *cur_vote )
 {
 	// Lookup full index
 	var_uint_t guide_index = KLL_TriggerIndex_loopkup( guide->type, guide->scanCode );
@@ -458,6 +528,16 @@ TriggerMacroVote Trigger_evalLongTriggerMacroVote( TriggerEvent *event, TriggerG
 
 		break;
 
+	// Rotation State Type
+	case TriggerType_Rotation1:
+		// Rotation triggers use state as the index, rather than encoding a type of action
+		// There is only "activated" state for rotations, which is only sent once
+		// This makes rotations not so useful for long macros
+		// (though it may be possible to implement it if there is demand)
+		// TODO
+		erro_print("Rotation State Type (Long Macros) - Not implemented...");
+		break;
+
 	// Invalid State Type
 	default:
 		erro_print("Invalid State Type. This is a bug.");
@@ -500,8 +580,8 @@ TriggerMacroVote Trigger_overallVote(
 
 			// Vote on triggers
 			vote |= long_trigger_macro
-				? Trigger_evalLongTriggerMacroVote( triggerInfo, guide )
-				: Trigger_evalShortTriggerMacroVote( triggerInfo, guide );
+				? Trigger_evalLongTriggerMacroVote( triggerInfo, guide, &overallVote )
+				: Trigger_evalShortTriggerMacroVote( triggerInfo, guide, &overallVote );
 		}
 
 		// Mask out incorrect votes, if anything indicates a pass
@@ -578,7 +658,9 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 		{
 		case 1:
 			Trigger_showTriggerMacroVote( overallVote, long_trigger_macro );
-			print( NL );
+			print(" TriggerMacroList[");
+			printInt16( triggerMacroIndex );
+			print("]");
 			break;
 		}
 
@@ -604,7 +686,7 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 			// If this is the last combo in the sequence, trigger result
 			if ( macro->guide[ pos + comboLength + 1 ] == 0 )
 			{
-				return TriggerMacroEval_DoResult;
+				return TriggerMacroEval_DoResultAndRemove;
 			}
 		}
 		// If ready for transition and in Press state, increment combo position
@@ -614,9 +696,9 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 
 			// If this is the last combo in the sequence, trigger result
 			// Or, the final release of a sequence
-			if ( macro->guide[ pos + comboLength + 1 ] == 0 || comboLength == 0 )
+			if ( comboLength == 0 || macro->guide[ pos + comboLength + 1 ] == 0 )
 			{
-				return TriggerMacroEval_DoResult;
+				return TriggerMacroEval_DoResultAndRemove;
 			}
 		}
 		// If passing and in Waiting state, set macro state to Press
@@ -628,7 +710,7 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 			// If this is the last combo in the sequence, trigger result
 			if ( macro->guide[ pos + comboLength + 1 ] == 0 )
 			{
-				return TriggerMacroEval_DoResult;
+				return TriggerMacroEval_DoResultAndRemove;
 			}
 		}
 	}
@@ -647,7 +729,9 @@ TriggerMacroEval Trigger_evalTriggerMacro( var_uint_t triggerMacroIndex )
 		{
 		case 1:
 			Trigger_showTriggerMacroVote( overallVote, long_trigger_macro );
-			print( NL );
+			print(" TriggerMacroList[");
+			printInt16( triggerMacroIndex );
+			print("]");
 			break;
 		}
 
@@ -756,6 +840,49 @@ void Trigger_updateTriggerMacroPendingList()
 }
 
 
+// Determines whether or not a scancode is used on a trigger
+// index -> index within trigger list
+uint8_t Trigger_DetermineScanCodeOnTrigger( const Layer *layer, uint8_t index )
+{
+	// Check all triggers
+	for ( uint8_t trigger = 1; trigger <= layer->triggerMap[index][0]; trigger++ )
+	{
+		// Trigger element
+		nat_ptr_t elem = layer->triggerMap[index][trigger];
+
+		// Lookup trigger type
+		const uint8_t *pos = TriggerMacroList[elem].guide;
+
+		// If there are no elements, ignore
+		if ( pos[0] == 0 )
+		{
+			continue;
+		}
+
+		// Only look at first type, no need to go further
+		// XXX (HaaTa) This may cause bugs, but it's not as likely
+		//             It's also much faster to only check the first type
+		switch ( pos[1] )
+		{
+		case TriggerType_Switch1:
+		case TriggerType_Switch2:
+		case TriggerType_Switch3:
+		case TriggerType_Switch4:
+		case TriggerType_Analog1:
+		case TriggerType_Analog2:
+		case TriggerType_Analog3:
+		case TriggerType_Analog4:
+			return 1;
+		default:
+			break;
+		}
+	}
+
+	// No triggers
+	return 0;
+}
+
+
 void Trigger_setup()
 {
 	// Initialize TriggerMacro states
@@ -797,17 +924,29 @@ void Trigger_process()
 		{
 		// Trigger Result Macro (purposely falling through)
 		case TriggerMacroEval_DoResult:
+			if ( voteDebugMode )
+			{
+				print(" DR");
+			}
 			// Append ResultMacro to PendingList
 			Result_appendResultMacroToPendingList(
 				&TriggerMacroList[ cur_macro ]
 			);
 
 		default:
+			if ( voteDebugMode )
+			{
+				print(" _" NL);
+			}
 			macroTriggerMacroPendingList[ macroTriggerMacroPendingListTail++ ] = cur_macro;
 			break;
 
 		// Trigger Result Macro and Remove (purposely falling through)
 		case TriggerMacroEval_DoResultAndRemove:
+			if ( voteDebugMode )
+			{
+				print(" DRaR");
+			}
 			// Append ResultMacro to PendingList
 			Result_appendResultMacroToPendingList(
 				&TriggerMacroList[ cur_macro ]
@@ -815,6 +954,10 @@ void Trigger_process()
 
 		// Remove Macro from Pending List, nothing to do, removing by default
 		case TriggerMacroEval_Remove:
+			if ( voteDebugMode )
+			{
+				print(" R" NL);
+			}
 			break;
 		}
 	}
