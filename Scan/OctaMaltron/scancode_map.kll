@@ -1,0 +1,59 @@
+# OctaMaltron
+
+Name = "OctaMaltron";
+Version = 0.1;
+Author = "Palle Raabjerg 2018";
+KLL = 0.5;
+
+# Modified Date
+Date = 2018-06-06;
+
+# Function keys (1-6, 14-19)
+S1 : U["F1"];
+S2 : U["F2"];
+S3 : U["F3"];
+S4 : U["F4"];
+S5 : U["F5"];
+S6 : U["F6"];
+S14 : U["F7"];
+S15 : U["F8"];
+S16 : U["F9"];
+S17 : U["F10"];
+S18 : U["F11"];
+S19 : U["F12"];
+
+# Numpad
+# Row 1 (7-13)
+S8 : U["NumLock"];
+S9 : U["P7"];
+S10 : U["P8"];
+S11 : U["P9"];
+S12 : U["P*"];
+S13 : U["ScrollLock"];
+
+# Row 2 (26-32)
+S26 : U["PrintScreen"];
+S27 : U["P="];
+S28 : U["P4"];
+S29 : U["P5"];
+S30 : U["P6"];
+S31 : U["P/"];
+S32 : U["Pause"];
+
+# Row 3 (45-51)
+S45 : U["Menu"];
+S46 : U["P-"];
+S47 : U["P1"];
+S48 : U["P2"];
+S49 : U["P3"];
+S50 : U["P+"];
+S51 : U["RGui"];
+
+# Row 4 (64-70)
+S64 : U["PageUp"];
+S65 : U["PEnter"];
+S66 : U["P0"];
+S67 : U["Insert"];
+S68 : U["Backspace"];
+S69 : U["P."];
+S70 : U["PageDown"];
