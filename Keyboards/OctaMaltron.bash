@@ -18,12 +18,12 @@ BuildPath="OctaMaltron"
 ## KLL Configuration ##
 
 # Generally shouldn't be changed, this will affect every layer
-BaseMap="scancode_map"
+BaseMap="scancode_map scancode_map.octaMaltron"
 
 # This is the default layer of the keyboard
 # NOTE: To combine kll files into a single layout, separate them by spaces
 # e.g.  DefaultMap="mylayout mylayoutmod"
-DefaultMap="octa/maltron"
+DefaultMap="octaBase"
 
 # This is where you set the additional layers
 # NOTE: Indexing starts at 1
