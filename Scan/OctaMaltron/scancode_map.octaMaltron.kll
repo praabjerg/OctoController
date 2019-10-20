@@ -23,6 +23,7 @@ S19 : U["F12"];
 
 # Numpad
 # Row 1 (7-13)
+S7 : U["CapsLock"];
 S8 : U["NumLock"];
 S9 : U["P7"];
 S10 : U["P8"];

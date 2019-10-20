@@ -1,0 +1,9 @@
+# Swedish overlay
+
+Name = "SwedishOcta";
+Version = 0.1;
+Author = "Palle Raabjerg 2019";
+
+Date = 2019-10-12;
+S76 : U["ScrollLock"], U["A"];
+S93 : U["ScrollLock"], U["O"];

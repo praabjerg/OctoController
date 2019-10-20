@@ -37,7 +37,7 @@ S56 : U["L"];
 S57 : U["LBracket"];
 
 # Row 4 (58-63, 71-76)
-S58 : U["CapsLock"];
+S58 : layerRotate(0);
 S59 : U["A"];
 S60 : U["N"];
 S61 : U["I"];
