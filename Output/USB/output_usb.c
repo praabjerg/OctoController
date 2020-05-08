@@ -40,7 +40,6 @@
 #include "arm/usb_keyboard.h"
 #include "arm/usb_mouse.h"
 #include "arm/usb_rawio.h"
-#include "arm/usb_serial.h"
 #endif
 
 // KLL
@@ -591,6 +590,43 @@ void Output_usbCodeSend_capability( TriggerMacro *trigger, uint8_t state, uint8_
 #endif
 }
 
+
+void Output_usbCodeRelease_capability(TriggerMacro *trigger, uint8_t state, uint8_t stateType, uint8_t *args)
+{
+#if enableKeyboard_define == 1 && disable_usbCodeRelease_define == 0
+	CapabilityState cstate = KLL_CapabilityState(state, stateType);
+
+	// Release, only on initial trigger
+	switch (cstate)
+	{
+	case CapabilityState_Initial:
+		break;
+	case CapabilityState_Debug:
+		// Display capability name
+		print("Output_usbCodeRelease(usbCode)");
+
+		// Read arg if not set to 0
+		if (args != 0)
+		{
+			uint8_t key = args[0];
+			print(" -> ");
+			printInt8(key);
+		}
+		return;
+	case CapabilityState_Last:
+	default:
+		return;
+	}
+
+	// Force release
+	state = ScheduleType_R;
+
+	// Use capability to release key
+	Output_usbCodeSend_capability(trigger, state, stateType, args);
+#endif
+}
+
+
 #if enableMouse_define == 1
 // Sends a mouse command over the USB Output buffer
 // XXX This function *will* be changing in the future
@@ -1079,45 +1115,32 @@ inline void USB_softReset()
 // USB Input buffer available
 inline unsigned int USB_availablechar()
 {
-#if enableVirtualSerialPort_define == 1
-	return usb_serial_available();
-#else
 	return 0;
-#endif
 }
 
 
 // USB Get Character from input buffer
 inline int USB_getchar()
 {
-#if enableVirtualSerialPort_define == 1
-	// XXX Make sure to check output_availablechar() first! Information is lost with the cast (error codes) (AVR)
-	return (int)usb_serial_getchar();
-#else
 	return 0;
-#endif
 }
 
 
 // USB Send Character to output buffer
 inline int USB_putchar( char c )
 {
+#if enableRawIO_define == 1
 	if (HIDIO_VT_Connected) {
 		return HIDIO_putchar( c );
 	}
-
-#if enableVirtualSerialPort_define == 1
-	return usb_serial_putchar( c );
-#else
-	return 0;
 #endif
+	return 0;
 }
 
 
 // USB Send String to output buffer, null terminated
 inline int USB_putstr( char* str )
 {
-#if enableVirtualSerialPort_define == 1
 #if defined(_avr_at_) // AVR
 	uint16_t count = 0;
 #else
@@ -1127,14 +1150,13 @@ inline int USB_putstr( char* str )
 	while ( str[count] != '\0' )
 		count++;
 
+#if enableRawIO_define == 1
 	if (HIDIO_VT_Connected) {
 		return HIDIO_putstr( str, count );
 	}
-
-	return usb_serial_write( str, count );
-#else
-	return 0;
 #endif
+
+	return 0;
 }
 
 

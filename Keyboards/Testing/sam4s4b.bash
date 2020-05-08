@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# This is a build and test script used to test KLL functionality
-# It runs on the host system and doesn't require a device to flash onto
-# Jacob Alexander 2016-2018
+# This is a build script template for testing builds
+# These build scripts are just a convenience for configuring your keyboard (less daunting than CMake)
+# Jacob Alexander 2015-2020
 
 
 
@@ -11,7 +11,7 @@
 
 # Feel free to change the variables in this section to configure your keyboard
 
-BuildPath="klltest"
+BuildPath="sam4s4b"
 
 ## KLL Configuration ##
 
@@ -21,7 +21,7 @@ BaseMap="scancode_map"
 # This is the default layer of the keyboard
 # NOTE: To combine kll files into a single layout, separate them by spaces
 # e.g.  DefaultMap="mylayout mylayoutmod"
-DefaultMap="ic60/macro_test animation_test klltest_default stdFuncMap"
+DefaultMap=""
 
 # This is where you set the additional layers
 # NOTE: Indexing starts at 1
@@ -29,9 +29,6 @@ DefaultMap="ic60/macro_test animation_test klltest_default stdFuncMap"
 # e.g.  PartialMaps[1]="layer1 layer1mod"
 #       PartialMaps[2]="layer2"
 #       PartialMaps[3]="layer3"
-PartialMaps[1]="ic60/hhkbpro2"
-PartialMaps[2]="colemak"
-PartialMaps[3]="klltest"
 
 
 
@@ -44,21 +41,16 @@ PartialMaps[3]="klltest"
 # NOTE: Changing any of these variables will require a force build to compile correctly
 
 # Keyboard Module Configuration
-ScanModule="TestIn"
-#MacroModule="PartialMap"
-MacroModule="PixelMap"
-OutputModule="TestOut"
+ScanModule="None"
+MacroModule="PartialMap"
+OutputModule="None"
 DebugModule="full"
 
 # Microcontroller
-Chip="host"
+Chip="sam4s4b"
 
 # Compiler Selection
 Compiler="gcc"
-
-# Enable run-time sanitizers
-EnableSanitizer=true
-CMakeExtraArgs="-DSANITIZER=1"
 
 
 
@@ -77,24 +69,6 @@ fi
 # Override CMakeLists path
 CMakeListsPath="../../.."
 
-# Not Supported on Cygwin
-if [[ $(uname -s) == MINGW32_NT* ]] || [[ $(uname -s) == CYGWIN* ]]; then
-	echo "macrotest.bash is unsupported on Cygwin. As are any host-side kll tests."
-	exit 0
-fi
-
 # Load the library
 source "../cmake.bash"
-
-# Load common functions
-source "../common.bash"
-
-# Run tests
-cd "${BuildPath}"
-
-cmd python3 Tests/kll.py
-
-# Tally results
-result
-exit $?
 
