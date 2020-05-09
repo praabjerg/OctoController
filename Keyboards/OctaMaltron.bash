@@ -34,6 +34,7 @@ DefaultMap="octaBase"
 # PartialMaps[1]="ic60/hhkbpro2"
 # PartialMaps[2]="colemak"
 PartialMaps[1]="swedish"
+PartialMaps[2]="kharak"
 
 
 ##########################

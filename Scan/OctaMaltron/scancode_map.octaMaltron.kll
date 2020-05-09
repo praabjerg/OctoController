@@ -41,7 +41,7 @@ S31 : U["P/"];
 S32 : U["Pause"];
 
 # Row 3 (45-51)
-S45 : U["Menu"];
+S45 : layerLock(2); #Lock Deserts of Kharak layer
 S46 : U["P-"];
 S47 : U["P1"];
 S48 : U["P2"];

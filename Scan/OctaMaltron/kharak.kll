@@ -1,0 +1,23 @@
+# Deserts of Kharak overlay
+
+Name = "KharakOcta";
+Version = 0.1;
+Author = "Palle Raabjerg 2020";
+
+Date = 2020-05-09;
+# Camera pan
+S42 : U["Up"];
+S60 : U["Left"];
+S61 : U["Down"];
+S62 : U["Right"];
+
+# Orders (Move Attack, Move, Rally Point, Stop, Hold, Aircraft Attack)
+S43 : U["A"];
+S44 : U["V"];
+S59 : U["Y"];
+S79 : U["S"];
+S80 : U["H"];
+S122 : U["W"];
+
+# Interface (Sensor map)
+S102 : U["Space"];
