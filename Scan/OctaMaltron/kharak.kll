@@ -11,13 +11,15 @@ S60 : U["Left"];
 S61 : U["Down"];
 S62 : U["Right"];
 
-# Orders (Move Attack, Move, Rally Point, Stop, Hold, Aircraft Attack)
+# Orders (Move Attack, Move, Rally Point, Stop, Hold, Build Light, Build Heavy, Aircraft Attack)
 S43 : U["A"];
 S44 : U["V"];
 S59 : U["Y"];
 S79 : U["S"];
 S80 : U["H"];
-S122 : U["W"];
+S103 : U["E"];
+S122 : U["R"];
+S123 : U["W"];
 
 # Interface (Sensor map)
 S102 : U["Space"];
