@@ -6,7 +6,10 @@ Author = "Palle Raabjerg 2020";
 
 Date = 2020-05-09;
 # Camera pan
+S40 : mouseWheelOut(1, 0);
+S41 : mouseWheelOut(-1, 0);
 S42 : U["Up"];
+S45 : layerLock(2), layerLock(3);
 S60 : U["Left"];
 S61 : U["Down"];
 S62 : U["Right"];

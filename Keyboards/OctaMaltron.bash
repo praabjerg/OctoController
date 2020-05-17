@@ -35,6 +35,7 @@ DefaultMap="octaBase"
 # PartialMaps[2]="colemak"
 PartialMaps[1]="swedish"
 PartialMaps[2]="kharak"
+PartialMaps[3]="stellaris"
 
 
 ##########################

@@ -1,0 +1,25 @@
+# Stellaris overlay
+
+Name = "StellarisOcta";
+Version = 0.1;
+Author = "Palle Raabjerg 2020";
+
+Date = 2020-05-17;
+# Camera pan
+S41 : U["O"];
+S42 : U["Up"];
+S43 : U["Q"];
+S44 : mouseWheelOut(1, 0);
+S45 : layerLock(3);
+S60 : U["Left"];
+S61 : U["Down"];
+S62 : U["Right"];
+S63 : mouseWheelOut(-1, 0);
+S78 : U["Z"];
+S79 : U["X"];
+S80 : U["C"];
+S81 : U["V"];
+S82 : U["L"];
+
+S102 : U["Space"];
+S122 : U["E"];
